@@ -1,0 +1,1 @@
+export default function PineLabEasyDashboard(){ return null }
