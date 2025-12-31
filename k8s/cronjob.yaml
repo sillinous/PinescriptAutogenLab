@@ -1,0 +1,107 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pinelab-backup
+  namespace: pinelab
+spec:
+  # Run daily at 2 AM
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: pinelab/backend:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              python -c "
+              from backend.reliability.backup_service import get_backup_service
+              service = get_backup_service()
+              result = service.create_backup(compress=True, encrypt=True, description='Scheduled backup')
+              print(f'Backup created: {result.get(\"backup_name\", \"failed\")}')
+              "
+            envFrom:
+            - configMapRef:
+                name: pinelab-config
+            - secretRef:
+                name: pinelab-secrets
+            volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: backups
+              mountPath: /app/backups
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: pinelab-data-pvc
+          - name: backups
+            persistentVolumeClaim:
+              claimName: pinelab-backups-pvc
+          restartPolicy: OnFailure
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pinelab-cleanup
+  namespace: pinelab
+spec:
+  # Run weekly on Sunday at 3 AM
+  schedule: "0 3 * * 0"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: cleanup
+            image: pinelab/backend:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              python -c "
+              from backend.reliability.backup_service import get_backup_service
+              from backend.auth.email_verification import get_email_verification_service
+              from backend.auth.password_reset import get_password_reset_service
+
+              # Cleanup old backups
+              backup_service = get_backup_service()
+              backup_result = backup_service.cleanup_old_backups(days_old=30)
+              print(f'Deleted {backup_result[\"deleted_count\"]} old backups')
+
+              # Cleanup old verification tokens
+              email_service = get_email_verification_service()
+              email_result = email_service.cleanup_old_tokens(days_old=7)
+              print(f'Deleted {email_result} old verification tokens')
+
+              # Cleanup old password reset tokens
+              reset_service = get_password_reset_service()
+              reset_result = reset_service.cleanup_old_tokens(days_old=7)
+              print(f'Deleted {reset_result} old reset tokens')
+              "
+            envFrom:
+            - configMapRef:
+                name: pinelab-config
+            - secretRef:
+                name: pinelab-secrets
+            volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: backups
+              mountPath: /app/backups
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: pinelab-data-pvc
+          - name: backups
+            persistentVolumeClaim:
+              claimName: pinelab-backups-pvc
+          restartPolicy: OnFailure

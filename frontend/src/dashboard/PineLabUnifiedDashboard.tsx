@@ -1,155 +1,239 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import React, { useState, useEffect } from 'react';
-import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, BarChart, Bar } from 'recharts';
+/* ---------------- Utilities ---------------- */
 
-const NavButton = ({ active, label, onClick }: any) => (
-  <button onClick={onClick} className={`${active ? 'bg-black text-white' : 'bg-gray-200'} px-3 py-2 rounded-xl text-sm font-medium`}>{label}</button>
-);
-
-const MetricCard = ({ title, value, change, good }: any) => (
-  <div className="flex flex-col p-4 bg-white rounded-xl border shadow-sm">
-    <div className="text-sm text-gray-600">{title}</div>
-    <div className="text-xl font-semibold">{value}</div>
-    {change && (<div className={`text-xs ${good ? 'text-green-600' : 'text-red-500'}`}>{change}</div>)}
-  </div>
-);
-
-function ABLiver({ apiBase }: { apiBase: string }) {
-  const [abOn, setAbOn] = useState(false);
-  const [cfg, setCfg] = useState({ control: 'live', shadow: 'paper', windowMins: 60, promoteIf: { sharpeDelta: 0.2, ddCap: 10 } });
-  const [status, setStatus] = useState<any>({ state: 'idle', windowEnds: null, control: {}, candidate: {} });
-  useEffect(()=>{
-    let t:any; const poll = async ()=>{ try{
-      const s = await fetch(`${apiBase}/ab/status`).then(r=>r.json());
-      setStatus(s); setAbOn(!!s.enabled);
-    }catch{} t=setTimeout(poll,15000)}; poll(); return ()=>clearTimeout(t);
-  },[apiBase]);
-  const startAB = async()=>{ const fd=new FormData(); fd.append('control',cfg.control); fd.append('shadow',cfg.shadow);
-    fd.append('window_mins', String(cfg.windowMins)); fd.append('promote_sharpe_delta', String(cfg.promoteIf.sharpeDelta));
-    fd.append('promote_dd_cap', String(cfg.promoteIf.ddCap)); await fetch(`${apiBase}/ab/start`,{method:'POST',body:fd});
-    const s=await fetch(`${apiBase}/ab/status`).then(r=>r.json()); setStatus(s); setAbOn(true); };
-  const stopAB = async()=>{ await fetch(`${apiBase}/ab/stop`,{method:'POST'}); const s=await fetch(`${apiBase}/ab/status`).then(r=>r.json()); setStatus(s); setAbOn(false); };
-  const promote = async()=>{ await fetch(`${apiBase}/ab/promote_candidate`,{method:'POST'}); alert('Candidate promoted to control.'); };
-  return <div className="space-y-3">
-    <div className="flex flex-wrap items-center gap-2">
-      <label className="text-xs text-gray-600">Control</label>
-      <select className="border rounded px-2 py-1 text-xs" value={cfg.control} onChange={e=>setCfg({...cfg, control:e.target.value})}><option value="live">Live</option><option value="paper">Paper</option></select>
-      <label className="text-xs text-gray-600">Shadow</label>
-      <select className="border rounded px-2 py-1 text-xs" value={cfg.shadow} onChange={e=>setCfg({...cfg, shadow:e.target.value})}><option value="paper">Paper</option><option value="live">Live</option></select>
-      <label className="text-xs text-gray-600">Window (min)</label>
-      <input type="number" className="border rounded px-2 py-1 w-20" value={cfg.windowMins} onChange={e=>setCfg({...cfg, windowMins:Number(e.target.value)})}/>
-      <label className="text-xs text-gray-600">SharpeΔ ≥</label>
-      <input type="number" step="0.05" className="border rounded px-2 py-1 w-24" value={cfg.promoteIf.sharpeDelta} onChange={e=>setCfg({...cfg, promoteIf:{...cfg.promoteIf, sharpeDelta:Number(e.target.value)}})}/>
-      <label className="text-xs text-gray-600">DD ≤</label>
-      <input type="number" step="0.1" className="border rounded px-2 py-1 w-24" value={cfg.promoteIf.ddCap} onChange={e=>setCfg({...cfg, promoteIf:{...cfg.promoteIf, ddCap:Number(e.target.value)}})}/>
-      {!abOn ? (<button onClick={startAB} className="px-3 py-2 rounded-lg bg-black text-white text-xs">Start A/B</button>)
-              : (<button onClick={stopAB} className="px-3 py-2 rounded-lg bg-red-600 text-white text-xs">Stop A/B</button>)}
-      <button onClick={promote} className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs">Promote Candidate</button>
-    </div>
-    <div className="grid md:grid-cols-2 gap-3 text-xs">
-      <div className="bg-gray-50 rounded-lg p-3 border"><div className="font-semibold mb-1">Control</div><pre className="whitespace-pre-wrap">{JSON.stringify(status.control||{},null,2)}</pre></div>
-      <div className="bg-gray-50 rounded-lg p-3 border"><div className="font-semibold mb-1">Candidate</div><pre className="whitespace-pre-wrap">{JSON.stringify(status.candidate||{},null,2)}</pre></div>
-    </div>
-    <div className="text-xs text-gray-600">State: <b>{status.state||'idle'}</b> • Window ends: {status.windowEnds||'—'} • Eligible: {String(status.eligible??false)}</div>
-  </div>
+function safeText(v: any, fallback: string = "—"): string {
+  if (v === undefined || v === null) return fallback;
+  const t = typeof v;
+  if (t === "string" || t === "number" || t === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return fallback;
+  }
 }
 
-export default function PineLabUnifiedDashboard({ apiBase }: { apiBase: string }){
-  const [summary, setSummary] = useState<any>({ equity: 0, cash: 0, unrealized: 0, ordersToday: 0, health: 'Good' });
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [performanceMode, setPerformanceMode] = useState(false);
-  const [metrics, setMetrics] = useState<any>({ sharpe: 0, drawdown: 0, corr: [], benchmarks: [] });
-  const [autoTuneOn, setAutoTuneOn] = useState(false);
-  const [autoTuneCfg, setAutoTuneCfg] = useState({ cadenceMin: 30, sharpeTarget: 1.0, maxDD: 10, trials: 50, sampler: 'tpe' });
-  const [autoTuneStatus, setAutoTuneStatus] = useState<any>({ state: 'idle', lastRun: null, bestScore: null, bestParams: null });
-  const [bestParams, setBestParams] = useState<any>(null);
+// simple polling hook with cleanup
+function usePoll<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  intervalMs: number,
+  deps: any[] = [],
+  { immediate = true }: { immediate?: boolean } = {}
+) {
+  const [data, setData] = useState<T | null>(null);
+  const [err, setErr] = useState<Error | null>(null);
+  const timerRef = useRef<number | null>(null);
 
-  useEffect(()=>{
-    const fetchSummary = async()=>{
-      try{
-        const pnl = await fetch(`${apiBase}/pnl/summary`).then(r=>r.json());
-        const journal = await fetch(`${apiBase}/journal/orders`).then(r=>r.json());
-        const today = journal.filter((j:any)=> j.time && j.time.startsWith(new Date().toISOString().slice(0,10))).length;
-        const eq = pnl.equity||0, cash = pnl.cash||0, unreal = pnl.unrealized||0;
-        const pnlPct = eq && cash ? ((eq-cash)/cash)*100 : 0;
-        setSummary({ equity:eq, cash, unrealized:unreal, pnlPct, ordersToday: today, health: pnlPct > -1 ? 'Good':'Review' });
-        const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        setChartData(prev=>[...prev.slice(-30), {time:ts, equity:eq, pnl:pnlPct}]);
-      }catch{}
+  useEffect(() => {
+    let mounted = true;
+    const controller = new AbortController();
+
+    const run = async () => {
+      try {
+        const res = await fn(controller.signal);
+        if (mounted) setData(res);
+      } catch (e: any) {
+        if (mounted && e?.name !== "AbortError") setErr(e);
+      }
     };
-    fetchSummary();
-    const t = setInterval(fetchSummary, 20000);
-    return ()=>clearInterval(t);
-  },[apiBase]);
 
-  useEffect(()=>{
-    let t:any;
-    const poll = async()=>{
-      try{
-        const s = await fetch(`${apiBase}/autotune/status`).then(r=>r.json());
-        setAutoTuneStatus(s); setAutoTuneOn(!!s.enabled);
-        if(s?.promoted?.params) setBestParams(s.promoted.params);
-      }catch{} t=setTimeout(poll,15000);
-    }; poll(); return ()=>clearTimeout(t);
-  },[apiBase]);
+    if (immediate) run();
+    timerRef.current = window.setInterval(run, Math.max(1000, intervalMs));
 
-  const startAutoTune = async()=>{ const fd=new FormData(); Object.entries(autoTuneCfg).forEach(([k,v])=>fd.append(k,String(v)));
-    await fetch(`${apiBase}/autotune/start_bayes`,{method:'POST', body:fd});
-    const s = await fetch(`${apiBase}/autotune/status`).then(r=>r.json()); setAutoTuneStatus(s); setAutoTuneOn(True)};
+    return () => {
+      mounted = false;
+      controller.abort();
+      if (timerRef.current) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 
-  const stopAutoTune = async()=>{ await fetch(`${apiBase}/autotune/stop`,{method:'POST'}); const s=await fetch(`${apiBase}/autotune/status`).then(r=>r.json()); setAutoTuneStatus(s); setAutoTuneOn(false)};
+  return { data, err } as const;
+}
 
-  const promoteBest = async()=>{ await fetch(`${apiBase}/autotune/promote_best`,{method:'POST'}); alert('Best parameters promoted to active strategy!'); };
+/* ---------------- Small UI bits ---------------- */
 
-  const useBestParams = async()=>{
-    try{ const best = await fetch(`${apiBase}/strategy/params/best`).then(r=>r.json());
-      if(!best?.params) return alert('No promoted parameters found.');
-      setBestParams(best.params); alert('Loaded promoted best parameters into Strategy Studio.');
-    }catch{ alert('Error loading best parameters.'); }
+function Card({
+  title,
+  value,
+  hint,
+  good,
+}: {
+  title: string;
+  value: React.ReactNode;
+  hint?: string;
+  good?: boolean;
+}) {
+  return (
+    <div className="flex flex-col p-4 bg-white rounded-xl border shadow-sm">
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className={`text-xl font-semibold ${good === false ? "text-red-600" : ""}`}>
+        {value}
+      </div>
+      {hint ? (
+        <div className={`text-[11px] ${good ? "text-green-600" : "text-gray-500"} mt-0.5`}>
+          {hint}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border rounded-xl shadow-sm p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Progress({ pct }: { pct: number }) {
+  const clamped = Math.max(0, Math.min(100, pct || 0));
+  return (
+    <div className="w-full h-2 rounded-full bg-gray-200 overflow-hidden">
+      <div
+        className="h-2 bg-green-600"
+        style={{ width: `${clamped}%`, transition: "width .4s ease" }}
+      />
+    </div>
+  );
+}
+
+/* ---------------- Main Dashboard ---------------- */
+
+export default function PineLabUnifiedDashboard({
+  apiBase = "http://localhost:8080",
+}: {
+  apiBase?: string;
+}) {
+  // PnL & journal
+  const { data: pnlData } = usePoll(
+    async (signal) => {
+      const [pnl, journal] = await Promise.all([
+        fetch(`${apiBase}/pnl/summary`, { signal }).then((r) => r.json()),
+        fetch(`${apiBase}/journal/orders`, { signal }).then((r) => r.json()),
+      ]);
+      const todayCount = Array.isArray(journal)
+        ? journal.filter(
+            (j: any) =>
+              j?.id && j?.symbol && String(j?.time || "").startsWith(new Date().toISOString().slice(0, 10))
+          ).length
+        : 0;
+      return { pnl, todayCount };
+    },
+    15000,
+    [apiBase]
+  );
+
+  // Auto-tune status
+  const { data: tuneData } = usePoll(
+    async (signal) => {
+      const s = await fetch(`${apiBase}/autotune/status`, { signal }).then((r) => r.json());
+      return s;
+    },
+    12000,
+    [apiBase]
+  );
+
+  // AB status
+  const { data: abData } = usePoll(
+    async (signal) => {
+      const s = await fetch(`${apiBase}/ab/status`, { signal }).then((r) => r.json());
+      return s;
+    },
+    12000,
+    [apiBase]
+  );
+
+  const equity$ = useMemo(() => safeText(pnlData?.pnl?.net_profit ?? 0), [pnlData]);
+  const trades = useMemo(() => Number(pnlData?.pnl?.total_trades ?? 0), [pnlData]);
+  const winRate = useMemo(() => Number(pnlData?.pnl?.win_rate ?? 0), [pnlData]);
+  const pf = useMemo(() => Number(pnlData?.pnl?.profit_factor ?? 0), [pnlData]);
+  const ordersToday = useMemo(() => Number(pnlData?.todayCount ?? 0), [pnlData]);
+
+  const tunePct = useMemo(() => Number(tuneData?.progress ?? 0), [tuneData]);
+  const tuneBest = useMemo(() => tuneData?.best_parameters ?? {}, [tuneData]);
+
+  const aWin = useMemo(() => Number(abData?.variant_a_winrate ?? 0), [abData]);
+  const bWin = useMemo(() => Number(abData?.variant_b_winrate ?? 0), [abData]);
+  const abWinner = useMemo(() => safeText(abData?.winner ?? "—"), [abData]);
+  const abName = useMemo(() => safeText(abData?.test_name ?? "—"), [abData]);
+
+  // Actions (mock back to your backend)
+  const handleStartAB = async () => {
+    // In your real backend, add POST /ab/start to control a test window
+    alert("A/B start requested (wire POST /ab/start in backend when ready)");
+  };
+  const handlePromote = async () => {
+    alert("Promote requested (wire POST /ab/promote_candidate in backend when ready)");
   };
 
-  return <div className="p-6 space-y-6">
-    <div className="grid md:grid-cols-5 gap-3">
-      <MetricCard title="Equity" value={`$${summary.equity.toFixed(2)}`}/>
-      <MetricCard title="Cash" value={`$${summary.cash.toFixed(2)}`}/>
-      <MetricCard title="Unrealized P&L" value={`$${summary.unrealized.toFixed(2)}`} good={summary.unrealized>=0}/>
-      <MetricCard title="Orders Today" value={summary.ordersToday}/>
-      <MetricCard title="Strategy Health" value={summary.health} change={`${summary.pnlPct?.toFixed(2)}%`} good={summary.health==='Good'}/>
-    </div>
+  return (
+    <div className="p-6 space-y-6">
+      {/* Top cards */}
+      <div className="grid gap-3 md:grid-cols-5">
+        <Card title="Net P&L ($)" value={`$${equity$}`} />
+        <Card title="Total Trades" value={trades} />
+        <Card title="Win Rate" value={`${winRate.toFixed(2)}%`} />
+        <Card title="Profit Factor" value={pf.toFixed(2)} good={pf >= 1.2} />
+        <Card title="Orders Today" value={ordersToday} />
+      </div>
 
-    <div className="bg-white border rounded-xl shadow-sm p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold">Auto-Optimization & Walk-Forward Validation</h3>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-600">Cadence</label>
-          <input type="number" className="border rounded px-2 py-1 w-16" value={autoTuneCfg.cadenceMin} onChange={e=>setAutoTuneCfg({...autoTuneCfg, cadenceMin:Number(e.target.value)})}/>
-          <label className="text-xs text-gray-600">Trials</label>
-          <input type="number" className="border rounded px-2 py-1 w-16" value={autoTuneCfg.trials} onChange={e=>setAutoTuneCfg({...autoTuneCfg, trials:Number(e.target.value)})}/>
-          <label className="text-xs text-gray-600">Sampler</label>
-          <select className="border rounded px-2 py-1 text-xs" value={autoTuneCfg.sampler} onChange={e=>setAutoTuneCfg({...autoTuneCfg, sampler:e.target.value})}>
-            <option value="tpe">TPE</option><option value="cmaes">CMA-ES</option><option value="random">Random</option>
-          </select>
-          {!autoTuneOn ? (<button onClick={startAutoTune} className="px-3 py-2 rounded-lg bg-black text-white text-xs">Start</button>)
-                        : (<button onClick={stopAutoTune} className="px-3 py-2 rounded-lg bg-red-600 text-white text-xs">Stop</button>)}
-          <button onClick={promoteBest} className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs">Promote Best</button>
-          <button onClick={useBestParams} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs">Use Best Params</button>
+      {/* Auto-Optimization */}
+      <Section title="Auto-Optimization">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="p-3 rounded-lg border bg-gray-50">
+            <div className="text-xs text-gray-600 mb-1">Progress</div>
+            <Progress pct={isFinite(tunePct) ? tunePct : 0} />
+            <div className="text-[11px] mt-1 text-gray-500">{tunePct.toFixed(1)}%</div>
+          </div>
+          <div className="p-3 rounded-lg border bg-gray-50 md:col-span-2">
+            <div className="text-xs text-gray-600 mb-1">Best Parameters</div>
+            <pre className="text-[11px] whitespace-pre-wrap">
+              {safeText(tuneBest, "{}")}
+            </pre>
+          </div>
         </div>
-      </div>
-      <div className="grid md:grid-cols-3 gap-3 text-xs text-gray-700">
-        <div className="bg-gray-50 rounded-lg p-2"><b>Status:</b> {autoTuneStatus.state||'idle'}</div>
-        <div className="bg-gray-50 rounded-lg p-2"><b>Last Run:</b> {autoTuneStatus.lastRun||'—'}</div>
-        <div className="bg-gray-50 rounded-lg p-2 overflow-auto"><b>Best:</b> {autoTuneStatus.bestScore?`score=${autoTuneStatus.bestScore}`:'—'} {autoTuneStatus.bestParams?`params=${JSON.stringify(autoTuneStatus.bestParams)}`:''}</div>
-      </div>
-    </div>
+      </Section>
 
-    {bestParams && (<div className="bg-green-50 border border-green-200 rounded-xl p-3 text-xs text-gray-800">
-      <div className="font-semibold mb-1">Current Best Parameters in Studio:</div>
-      <pre className="whitespace-pre-wrap">{JSON.stringify(bestParams,null,2)}</pre>
-    </div>)}
-
-    <div className="bg-white border rounded-xl shadow-sm p-4">
-      <div className="flex items-center justify-between mb-2"><h3 className="text-sm font-semibold">A/B Live Shadow Deployments</h3></div>
-      <ABLiver apiBase={apiBase}/>
+      {/* A/B Testing */}
+      <Section title="A/B Live Shadow Deployments">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="p-3 rounded-lg border bg-gray-50">
+            <div className="text-xs text-gray-600 mb-1">Test</div>
+            <div className="text-sm font-semibold">{abName}</div>
+            <div className="text-[11px] mt-1 text-gray-500">
+              Winner: <span className="font-medium">{abWinner}</span>
+            </div>
+          </div>
+          <div className="p-3 rounded-lg border bg-gray-50">
+            <div className="text-xs text-gray-600 mb-1">Variant A Winrate</div>
+            <div className="text-sm font-semibold">{isFinite(aWin) ? `${aWin.toFixed(2)}%` : "—"}</div>
+          </div>
+          <div className="p-3 rounded-lg border bg-gray-50">
+            <div className="text-xs text-gray-600 mb-1">Variant B Winrate</div>
+            <div className="text-sm font-semibold">{isFinite(bWin) ? `${bWin.toFixed(2)}%` : "—"}</div>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={handleStartAB}
+            className="px-3 py-2 rounded-lg bg-black text-white text-xs"
+          >
+            Start A/B
+          </button>
+          <button
+            onClick={handlePromote}
+            className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs"
+          >
+            Promote Candidate
+          </button>
+        </div>
+      </Section>
     </div>
-  </div>
+  );
 }

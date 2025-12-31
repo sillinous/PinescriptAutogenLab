@@ -1,13 +1,48 @@
-import React from 'react'
-import Dashboard from './dashboard/PineLabUnifiedDashboard'
+import { useState } from "react";
+import PineLabUnifiedDashboard from "./dashboard/PineLabUnifiedDashboard";
+import BrokerPanel from "./dashboard/BrokerPanel";
 
-export default function App(){ 
-  // Change to your backend URL if not localhost
-  const apiBase = 'http://localhost:8080'
-  return <div style={{fontFamily:'Inter,system-ui,Arial', background:'#f6f7fb', minHeight:'100vh'}}>
-    <div style={{maxWidth:1200, margin:'0 auto', padding:20}}>
-      <h1 style={{fontSize:20, fontWeight:700, marginBottom:12}}>PineScript Autogen Lab</h1>
-      <Dashboard apiBase={apiBase}/>
+export default function App() {
+  const [activeTab, setActiveTab] = useState<"dashboard" | "broker">("dashboard");
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-bold">PineScript Autogen Lab</h1>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveTab("dashboard")}
+                className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+                  activeTab === "dashboard"
+                    ? "bg-black text-white"
+                    : "bg-gray-100 hover:bg-gray-200"
+                }`}
+              >
+                Dashboard
+              </button>
+              <button
+                onClick={() => setActiveTab("broker")}
+                className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+                  activeTab === "broker"
+                    ? "bg-black text-white"
+                    : "bg-gray-100 hover:bg-gray-200"
+                }`}
+              >
+                Brokers
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {activeTab === "dashboard" && <PineLabUnifiedDashboard />}
+        {activeTab === "broker" && <BrokerPanel />}
+      </div>
     </div>
-  </div>
+  );
 }

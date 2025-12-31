@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pinelab-data-pvc
+  namespace: pinelab
+  labels:
+    app: pinelab
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard  # Change based on your cluster
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pinelab-backups-pvc
+  namespace: pinelab
+  labels:
+    app: pinelab
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+# For production, consider using:
+# - AWS EBS (gp3, io2)
+# - Google Persistent Disk (pd-ssd)
+# - Azure Disk (Premium_LRS)
+# - Network storage (NFS, Ceph, etc.)
+
+# Example with AWS EBS:
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: pinelab-data-pvc
+#   namespace: pinelab
+# spec:
+#   accessModes:
+#   - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 100Gi
+#   storageClassName: gp3
