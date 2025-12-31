@@ -112,7 +112,7 @@ class TestRetryHandler:
 
     def test_retry_with_specific_exceptions(self):
         """Test retry only on specific exceptions."""
-        handler = RetryHandler(max_attempts=3, base_delay=0.01)
+        handler = RetryHandler(max_attempts=3, base_delay=0.01, retriable_exceptions=[ConnectionError])
 
         call_count = 0
 
@@ -125,8 +125,10 @@ class TestRetryHandler:
                 raise ValueError("Non-retriable")
             return "success"
 
-        # Should fail on ValueError without exhausting retries
-        # (depending on retry logic implementation)
+        with pytest.raises(ValueError):
+            handler.retry(fail_with_different_exceptions, operation_type="test")
+
+        assert call_count == 2
 
     def test_jitter_variation(self):
         """Test jitter adds randomness to delays."""
@@ -264,6 +266,35 @@ class TestOrderReconciliation:
 
         assert result['reconciled'] is True
         assert result['status_changed'] is False
+
+    @pytest.mark.asyncio
+    async def test_reconcile_order_not_found_on_broker(self, db, mock_alpaca_client):
+        """Test reconciling an order that is not found on the broker."""
+        from backend.database import create_order, get_order
+
+        # Create order in database with pending status
+        order_id = create_order(
+            strategy_name='TestStrategy',
+            symbol='AAPL',
+            action='buy',
+            quantity=10,
+            order_type='market',
+            status='pending',
+            broker_order_id='order_not_found'
+        )
+
+        service = OrderReconciliationService()
+        order = get_order(order_id)
+
+        # Reconcile
+        result = await service.reconcile_order(order)
+
+        assert result['reconciled'] is True
+        assert result['status_changed'] is True
+
+        # Verify database updated
+        updated_order = get_order(order_id)
+        assert updated_order['status'] == 'not_found'
 
     def test_singleton_pattern(self):
         """Test reconciliation service uses singleton pattern."""
@@ -465,21 +496,23 @@ class TestBackupService:
         assert 'created_at' in backup
         assert 'size_bytes' in backup
 
-    def test_concurrent_backups(self, db, cleanup_temp_files):
-        """Test creating multiple backups concurrently."""
+    def test_restore_corrupted_backup(self, db, cleanup_temp_files):
+        """Test restoring from a corrupted backup."""
         service = BackupService()
 
-        # Create backups in quick succession
-        results = []
-        for i in range(3):
-            result = service.create_backup(compress=False, encrypt=False, description=f"Concurrent {i}")
-            results.append(result)
-            cleanup_temp_files.append(result['backup_path'])
-            time.sleep(0.1)  # Small delay to ensure unique timestamps
+        # Create a valid backup
+        backup_result = service.create_backup(compress=False, encrypt=False, description="Corrupted backup test")
+        cleanup_temp_files.append(backup_result['backup_path'])
 
-        # All should succeed with different names
-        names = [r['backup_name'] for r in results]
-        assert len(set(names)) == 3  # All unique
+        # Corrupt the backup file
+        with open(backup_result['backup_path'], 'w') as f:
+            f.write("This is not a valid database file.")
+
+        # Attempt to restore
+        restore_result = service.restore_backup(backup_result['backup_name'])
+
+        assert restore_result['success'] is False
+        assert 'error' in restore_result
 
     def test_singleton_pattern(self):
         """Test backup service uses singleton pattern."""

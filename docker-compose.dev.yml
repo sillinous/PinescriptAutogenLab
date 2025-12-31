@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pinelab-backend-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - pinelab-data-dev:/app/data
+      - pinelab-backups-dev:/app/backups
+      - pinelab-logs-dev:/app/logs
+    env_file:
+      - .env.docker
+    networks:
+      - pinelab-network-dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pinelab-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    networks:
+      - pinelab-network-dev
+    command: npm run dev
+
+volumes:
+  pinelab-data-dev:
+    driver: local
+  pinelab-backups-dev:
+    driver: local
+  pinelab-logs-dev:
+    driver: local
+
+networks:
+  pinelab-network-dev:
+    driver: bridge
