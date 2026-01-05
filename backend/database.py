@@ -393,29 +393,35 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ab_tests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            description TEXT,
-            status TEXT DEFAULT 'draft', -- 'draft', 'running', 'completed', 'archived'
-            start_date TIMESTAMP,
-            end_date TIMESTAMP,
-            control_strategy_id INTEGER,
-            experiment_strategy_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            test_name TEXT UNIQUE NOT NULL,
+            variant_a_params TEXT NOT NULL,
+            variant_b_params TEXT NOT NULL,
+            start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            end_time TIMESTAMP,
+            min_sample_size INTEGER DEFAULT 30,
+            significance_level REAL DEFAULT 0.05,
+            status TEXT DEFAULT 'running',
+            winner TEXT,
+            p_value REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ab_test_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ab_test_id INTEGER NOT NULL,
-            order_id INTEGER NOT NULL,
-            strategy_id INTEGER NOT NULL, -- Which strategy (control/experiment) generated this trade
-            is_control BOOLEAN NOT NULL,
+            test_name TEXT NOT NULL,
+            variant TEXT NOT NULL,
+            signal_time TIMESTAMP NOT NULL,
+            symbol TEXT,
+            side TEXT,
+            entry_price REAL,
+            exit_price REAL,
             pnl REAL,
+            pnl_pct REAL,
+            is_winner BOOLEAN,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ab_test_id) REFERENCES ab_tests(id),
-            FOREIGN KEY (order_id) REFERENCES orders(id)
+            FOREIGN KEY (test_name) REFERENCES ab_tests(test_name)
         )
     """)
 
@@ -439,6 +445,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feature_store_ticker_timestamp ON feature_store(ticker, timestamp)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_regimes_ticker ON market_regimes(ticker)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_status ON ab_tests(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ab_test_trades_test ON ab_test_trades(test_name)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ab_test_trades_variant ON ab_test_trades(variant)")
 
 
     conn.commit()
