@@ -169,7 +169,8 @@ class ABTestingService:
         conn = get_db()
         cursor = conn.cursor()
 
-        is_winner = (pnl > 0) if pnl is not None else None
+        # Convert to Python bool to avoid numpy.bool_ JSON serialization issues
+        is_winner = bool(pnl > 0) if pnl is not None else None
 
         cursor.execute("""
             INSERT INTO ab_test_trades (
@@ -231,7 +232,8 @@ class ABTestingService:
         # Statistical test (t-test for PnL difference)
         if len(a_pnls) >= 10 and len(b_pnls) >= 10:
             t_stat, p_value = stats.ttest_ind(a_pnls, b_pnls)
-            is_significant = p_value < 0.05
+            p_value = float(p_value)  # Convert numpy float to Python float
+            is_significant = bool(p_value < 0.05)  # Convert to Python bool
         else:
             p_value = 1.0
             is_significant = False
@@ -327,7 +329,7 @@ class ABTestingService:
             return 0.0
 
         sharpe = (np.mean(returns) / np.std(returns)) * np.sqrt(252)
-        return sharpe
+        return float(sharpe)  # Convert numpy float to Python float
 
     def get_active_tests(self) -> List[Dict[str, Any]]:
         """Get all active A/B tests."""

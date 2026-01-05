@@ -33,13 +33,22 @@ def async_client():
 def clear_active_optimizations():
     """Fixture to clear active optimizations before each test."""
     _active_optimizations.clear()
-    # Clear AB test data as well
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM ab_tests")
-    cursor.execute("DELETE FROM ab_test_trades")
-    conn.commit()
-    conn.close()
+    # Clear AB test data as well - with retry for SQLite locking
+    import sqlite3
+    for attempt in range(3):
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM ab_tests")
+            cursor.execute("DELETE FROM ab_test_trades")
+            conn.commit()
+            conn.close()
+            break
+        except sqlite3.OperationalError:
+            if attempt < 2:
+                time.sleep(0.1)
+            else:
+                pass  # Skip cleanup if database is locked
     yield
 
 

@@ -1,4 +1,5 @@
 # Dockerfile for PinescriptAutogenLab Backend
+# Multi-stage build for minimal production image
 
 # Stage 1: Build stage
 FROM python:3.11-slim as builder
@@ -6,17 +7,27 @@ FROM python:3.11-slim as builder
 # Set working directory
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies including TA-Lib
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     make \
     libffi-dev \
     libssl-dev \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
+# Install TA-Lib C library (required for ta-lib Python package)
+RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
+    tar -xzf ta-lib-0.4.0-src.tar.gz && \
+    cd ta-lib && \
+    ./configure --prefix=/usr && \
+    make && \
+    make install && \
+    cd .. && rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
 # Copy requirements
-COPY requirements.txt.full requirements.txt
+COPY backend/requirements.txt requirements.txt
 
 # Create virtual environment and install dependencies
 RUN python -m venv /opt/venv
@@ -38,6 +49,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy TA-Lib shared libraries from builder
+COPY --from=builder /usr/lib/libta_lib* /usr/lib/
+COPY --from=builder /usr/include/ta-lib /usr/include/ta-lib
+
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 
@@ -47,9 +62,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy application code
 COPY backend/ ./backend/
 
+# Copy pre-trained models (if available)
+COPY models/ ./models/
+
 # Create necessary directories
-RUN mkdir -p /app/data /app/backups /app/logs && \
-    chmod 755 /app/data /app/backups /app/logs
+RUN mkdir -p /app/data /app/backups /app/logs /app/models && \
+    chmod 755 /app/data /app/backups /app/logs /app/models
 
 # Create non-root user
 RUN useradd -m -u 1000 pinelab && \
