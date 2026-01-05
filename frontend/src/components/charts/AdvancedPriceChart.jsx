@@ -21,6 +21,10 @@ export function AdvancedPriceChart({ symbol, interval = '1h', showSR = true }) {
   useEffect(() => {
     let mounted = true
 
+    // Clear old data immediately when symbol/interval changes
+    setCandles([])
+    setSRLevels(null)
+
     const fetchData = async () => {
       try {
         setLoading(true)
@@ -88,7 +92,7 @@ export function AdvancedPriceChart({ symbol, interval = '1h', showSR = true }) {
 
         <div className="h-96">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
+            <AreaChart key={`${symbol}-${interval}`} data={chartData}>
               <defs>
                 <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
@@ -99,9 +103,13 @@ export function AdvancedPriceChart({ symbol, interval = '1h', showSR = true }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
               <YAxis
-                domain={['dataMin - 10', 'dataMax + 10']}
+                domain={[(dataMin) => (dataMin * 0.995).toFixed(8), (dataMax) => (dataMax * 1.005).toFixed(8)]}
                 tick={{ fontSize: 11 }}
-                tickFormatter={(value) => `$${value.toFixed(2)}`}
+                tickFormatter={(value) => {
+                  // Use more decimals for values under $1
+                  const decimals = value < 1 ? 4 : value < 100 ? 2 : 0
+                  return `$${value.toFixed(decimals)}`
+                }}
               />
               <Tooltip
                 contentStyle={{
@@ -130,7 +138,7 @@ export function AdvancedPriceChart({ symbol, interval = '1h', showSR = true }) {
                     strokeDasharray="5 5"
                     strokeWidth={2}
                     label={{
-                      value: `S: $${level.toFixed(2)}`,
+                      value: `S: $${level < 1 ? level.toFixed(4) : level.toFixed(2)}`,
                       fill: '#10b981',
                       fontSize: 11,
                     }}
@@ -147,7 +155,7 @@ export function AdvancedPriceChart({ symbol, interval = '1h', showSR = true }) {
                     strokeDasharray="5 5"
                     strokeWidth={2}
                     label={{
-                      value: `R: $${level.toFixed(2)}`,
+                      value: `R: $${level < 1 ? level.toFixed(4) : level.toFixed(2)}`,
                       fill: '#ef4444',
                       fontSize: 11,
                     }}

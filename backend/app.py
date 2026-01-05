@@ -10,9 +10,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.database import init_db, DB_PATH # Import init_db and DB_PATH from the centralized database module
+
 CRYPTO_BASE = "https://api.crypto.com/v2"
 
-app = FastAPI(title="PineLab Crypto — Public Data API", version="1.0.0")
+app = FastAPI(title="PineLab AI Trading Platform", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,28 +22,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "cache.db")
+# ============================================================================
+# AI/ML Router Integration (Phase 1)
+# ============================================================================
+try:
+    from backend.api_ai import router as ai_router
+    app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI Trading"])
+    print("[INFO] AI Trading endpoints loaded successfully")
+except Exception as e:
+    print(f"[WARNING] AI endpoints not loaded: {e}")
+    print("[INFO] To enable AI features, ensure all dependencies are installed:")
+    print("       pip install -r requirements.txt")
 
-def db_init():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS candles(
-        symbol TEXT NOT NULL,
-        timeframe TEXT NOT NULL,
-        t INTEGER NOT NULL,
-        o REAL NOT NULL,
-        h REAL NOT NULL,
-        l REAL NOT NULL,
-        c REAL NOT NULL,
-        v REAL NOT NULL,
-        PRIMARY KEY(symbol, timeframe, t)
-    )
-    """)
-    conn.commit()
-    conn.close()
+# ============================================================================
+# Phase 2: Deep Learning Router Integration
+# ============================================================================
+try:
+    from backend.api_deep_learning import router as deep_learning_router
+    app.include_router(deep_learning_router)
+    print("[INFO] Phase 2 Deep Learning endpoints loaded successfully")
+    print("[INFO]    - LSTM Price Prediction")
+    print("[INFO]    - Transformer Sequence Forecasting")
+    print("[INFO]    - Ensemble Model Aggregation")
+except Exception as e:
+    print(f"[WARNING] Phase 2 Deep Learning endpoints not loaded: {e}")
+    print("[INFO] To enable Deep Learning features, ensure PyTorch is installed:")
+    print("       pip install torch>=2.1.0")
+# ============================================================================
 
-db_init()
+# Initialize the database using the centralized function
+init_db()
 
 def normalize_symbol(sym: str) -> str:
     s = sym.upper().replace("-", "").replace(":", "").strip()
@@ -81,6 +91,23 @@ class Candle(BaseModel):
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+@app.get("/health/live")
+async def health_live():
+    """Liveness probe - always returns OK if server is running"""
+    return {"status": "ok", "check": "liveness"}
+
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness probe - checks if app is ready to serve traffic"""
+    try:
+        # Check database connection
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("SELECT 1")
+        conn.close()
+        return {"status": "ok", "check": "readiness", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Not ready: {str(e)}")
 
 @app.get("/symbols")
 async def symbols():
@@ -125,9 +152,12 @@ INTERVAL_MAP = {
 
 @app.get("/candles/{symbol}")
 async def candles(symbol: str, interval: str = "1m", limit: int = 200):
+    print(f"[DEBUG] Candles endpoint called: symbol={symbol}, interval={interval}, limit={limit}")
     sym = normalize_symbol(symbol)
+    print(f"[DEBUG] Normalized symbol: {sym}, timeframe: {interval}")
     tf = INTERVAL_MAP.get(interval, "1m")
     limit = max(1, min(1000, int(limit)))
+    print(f"[DEBUG] Final params: sym={sym}, tf={tf}, limit={limit}")
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -142,9 +172,20 @@ async def candles(symbol: str, interval: str = "1m", limit: int = 200):
 
     async with httpx.AsyncClient() as client:
         res = await crypto_get(client, "/public/get-candlestick", params={"instrument_name": sym, "timeframe": tf})
-        arr = res.get("data", {}).get("candlestick", [])
-        if not arr:
-            raise HTTPException(status_code=404, detail=f"No candles for {sym}")
+
+        # Handle Crypto.com API response format
+        # Response structure: {"data": [...], "instrument_name": "...", "interval": "..."}
+        if isinstance(res, dict) and "data" in res:
+            candle_data = res["data"]
+        elif isinstance(res, list):
+            # Fallback: if res is directly a list
+            candle_data = res
+        else:
+            raise HTTPException(status_code=502, detail=f"Unexpected response format from API: {type(res)}")
+
+        if not candle_data:
+            raise HTTPException(status_code=404, detail=f"No candle data found for {sym}")
+
         all_c = [{
             "t": int(int(c["t"]) // 1000),
             "o": float(c["o"]),
@@ -152,7 +193,7 @@ async def candles(symbol: str, interval: str = "1m", limit: int = 200):
             "l": float(c["l"]),
             "c": float(c["c"]),
             "v": float(c["v"]),
-        } for c in arr[0].get("data", [])]
+        } for c in candle_data]
 
         all_c = all_c[-limit:]
         conn = sqlite3.connect(DB_PATH)
@@ -209,3 +250,6 @@ async def autotune_status():
             best_w = w
     progress = round(min(100.0, tested / 36 * 100.0), 1)
     return {"progress": progress, "best_parameters": {"sma_window": best_w, "score": round(best_score, 4)}}
+
+# Note: AI endpoints are now loaded from api_ai.py router with /api/v1/ai prefix
+# No stub endpoints needed - real AI features available via router

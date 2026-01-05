@@ -41,7 +41,7 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Broker credentials table
+    # Core Trading Platform Tables (from PROJECT_STATUS.md and NEXT_STEPS.md)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS broker_credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,7 +57,6 @@ def init_db():
         )
     """)
 
-    # Orders table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +82,6 @@ def init_db():
         )
     """)
 
-    # Fills/executions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,30 +95,6 @@ def init_db():
         )
     """)
 
-    # NEW: Users table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            hashed_password TEXT NOT NULL,
-            full_name TEXT,
-            is_active BOOLEAN DEFAULT 1,
-            is_admin BOOLEAN DEFAULT 0,
-            is_verified BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login TIMESTAMP
-        )
-    """)
-
-    # Add user_id to orders table
-    try:
-        cursor.execute("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id)")
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            raise
-
-    # Positions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS positions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,7 +112,6 @@ def init_db():
         )
     """)
 
-    # Strategy parameters table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS strategy_params (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,7 +124,6 @@ def init_db():
         )
     """)
 
-    # Performance tracking table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS performance_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,7 +139,6 @@ def init_db():
         )
     """)
 
-    # Webhook log table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS webhook_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,19 +155,298 @@ def init_db():
         )
     """)
 
+    # Tables from search results (auth, reliability, monitoring, AI, AB testing)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL,
+            full_name TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            is_admin BOOLEAN DEFAULT 0,
+            is_verified BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            session_token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_usage_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            endpoint TEXT NOT NULL,
+            method TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ip_address TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_verification_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_2fa (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER UNIQUE NOT NULL,
+            secret TEXT NOT NULL,
+            is_enabled BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_2fa_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            successful BOOLEAN NOT NULL,
+            ip_address TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS retry_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            retries_attempted INTEGER DEFAULT 0,
+            max_retries INTEGER DEFAULT 5,
+            next_attempt_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dead_letter_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_task_id INTEGER,
+            task_name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            error_message TEXT,
+            failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT NOT NULL,
+            details TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ip_address TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ml_models (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name VARCHAR(100),
+            type VARCHAR(50),  -- 'RL', 'LSTM', 'CNN', 'XGBoost'
+            version VARCHAR(20),
+            file_path TEXT,
+            hyperparameters TEXT, -- Stored as JSON string
+            performance_metrics TEXT, -- Stored as JSON string
+            trained_at TIMESTAMP,
+            deployed_at TIMESTAMP,
+            status VARCHAR(20)  -- 'training', 'deployed', 'archived'
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ai_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id INTEGER REFERENCES ml_models(id),
+            ticker VARCHAR(20),
+            prediction_type VARCHAR(50),  -- 'action', 'price', 'pattern'
+            predicted_value TEXT, -- Stored as JSON string
+            confidence REAL,
+            features TEXT, -- Stored as JSON string
+            market_state TEXT, -- Stored as JSON string
+            created_at TIMESTAMP,
+            actual_outcome TEXT,  -- Filled later for learning (JSON string)
+            accuracy_score REAL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tradingview_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_payload TEXT,
+            ticker VARCHAR(20),
+            action VARCHAR(10),
+            price REAL,
+            indicators TEXT,  -- Stored as JSON string
+            timeframe VARCHAR(10),
+            strategy_name VARCHAR(100),
+            timestamp TIMESTAMP,
+            processed BOOLEAN DEFAULT 0,
+            ai_prediction TEXT, -- AI's confidence/analysis (JSON string)
+            ai_confidence REAL -- AI's confidence score
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS signal_performance (
+            signal_id INTEGER PRIMARY KEY,
+            entry_price REAL,
+            exit_price REAL,
+            pnl REAL,
+            duration_minutes INTEGER,
+            success BOOLEAN,
+            ai_prediction TEXT, -- AI's confidence/analysis (JSON string)
+            ai_confidence REAL, -- AI's confidence score
+            FOREIGN KEY (signal_id) REFERENCES tradingview_signals(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS feature_store (
+            ticker VARCHAR(20),
+            timestamp TIMESTAMP,
+            features TEXT,  -- All calculated features (JSON string)
+            PRIMARY KEY (ticker, timestamp)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS learning_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type VARCHAR(50),  -- 'trade_closed', 'model_retrained', 'strategy_evolved'
+            trade_id INTEGER,
+            model_id INTEGER,
+            insights TEXT, -- Stored as JSON string
+            actions_taken TEXT, -- Stored as JSON string
+            created_at TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_regimes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker VARCHAR(20),
+            regime_type VARCHAR(50),  -- 'bull_trending', 'bear_trending', 'range_bound', 'high_volatility'
+            confidence REAL,
+            start_time TIMESTAMP,
+            end_time TIMESTAMP,
+            detected_by VARCHAR(50)  -- Model that detected it
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS strategy_evolution (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_name TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            fitness REAL NOT NULL,
+            parameters TEXT, -- Stored as JSON string
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS model_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id INTEGER NOT NULL,
+            metric_name TEXT NOT NULL,
+            metric_value REAL NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (model_id) REFERENCES ml_models(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ab_tests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'draft', -- 'draft', 'running', 'completed', 'archived'
+            start_date TIMESTAMP,
+            end_date TIMESTAMP,
+            control_strategy_id INTEGER,
+            experiment_strategy_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ab_test_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ab_test_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL,
+            strategy_id INTEGER NOT NULL, -- Which strategy (control/experiment) generated this trade
+            is_control BOOLEAN NOT NULL,
+            pnl REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ab_test_id) REFERENCES ab_tests(id),
+            FOREIGN KEY (order_id) REFERENCES orders(id)
+        )
+    """)
+
+    # Add user_id to orders table if not exists
+    try:
+        cursor.execute("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id)")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            raise
+
     # Create indexes
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_symbol ON orders(symbol)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_timestamp ON webhook_log(timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_status ON ml_models(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_ticker ON ai_predictions(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tradingview_signals_ticker ON tradingview_signals(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_feature_store_ticker_timestamp ON feature_store(ticker, timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_regimes_ticker ON market_regimes(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_status ON ab_tests(status)")
+
 
     conn.commit()
     conn.close()
     print(f"[OK] Database initialized at {DB_PATH}")
 
 
-# --- Database helper functions ---
+# --- Database helper functions (to be reconstructed) ---
 
 def insert_order(data: Dict[str, Any]) -> int:
     """Insert new order and return order ID."""
@@ -206,8 +456,8 @@ def insert_order(data: Dict[str, Any]) -> int:
     cursor.execute("""
         INSERT INTO orders (
             client_order_id, broker_type, symbol, side, order_type,
-            qty, notional, limit_price, webhook_payload, time_in_force
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            qty, notional, limit_price, webhook_payload, time_in_force, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         data.get('client_order_id'),
         data.get('broker_type'),
@@ -218,7 +468,8 @@ def insert_order(data: Dict[str, Any]) -> int:
         data.get('notional'),
         data.get('limit_price'),
         data.get('webhook_payload'),
-        data.get('time_in_force', 'day')
+        data.get('time_in_force', 'day'),
+        data.get('user_id')
     ))
 
     order_id = cursor.lastrowid
@@ -232,7 +483,6 @@ def update_order(order_id: int, updates: Dict[str, Any]):
     conn = get_db()
     cursor = conn.cursor()
 
-    # Build dynamic UPDATE query
     set_clauses = []
     values = []
     for key, value in updates.items():
@@ -476,6 +726,77 @@ def calculate_pnl_summary() -> Dict[str, Any]:
         'realized_pnl': round((total_wins - total_losses), 2),
         'unrealized_pnl': round(unrealized_pnl, 2)
     }
+
+
+def insert_tradingview_signal(signal_data: Dict[str, Any]) -> int:
+    """Insert a new TradingView signal into the database."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO tradingview_signals (
+            raw_payload, ticker, action, price, indicators, timeframe,
+            strategy_name, timestamp, processed, ai_prediction, ai_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        json.dumps(signal_data.get('raw_payload')) if signal_data.get('raw_payload') else None,
+        signal_data.get('ticker'),
+        signal_data.get('action'),
+        signal_data.get('price'),
+        json.dumps(signal_data.get('indicators')) if signal_data.get('indicators') else None,
+        signal_data.get('timeframe'),
+        signal_data.get('strategy_name'),
+        signal_data.get('timestamp', datetime.utcnow()),
+        signal_data.get('processed', False),
+        json.dumps(signal_data.get('ai_prediction')) if signal_data.get('ai_prediction') else None,
+        signal_data.get('ai_confidence')
+    ))
+    signal_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return signal_id
+
+
+def insert_signal_performance(performance_data: Dict[str, Any]):
+    """Insert signal performance data into the database."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO signal_performance (
+            signal_id, entry_price, exit_price, pnl, duration_minutes,
+            success, ai_prediction, ai_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        performance_data.get('signal_id'),
+        performance_data.get('entry_price'),
+        performance_data.get('exit_price'),
+        performance_data.get('pnl'),
+        performance_data.get('duration_minutes'),
+        performance_data.get('success'),
+        json.dumps(performance_data.get('ai_prediction')) if performance_data.get('ai_prediction') else None,
+        performance_data.get('ai_confidence')
+    ))
+    conn.commit()
+    conn.close()
+
+
+def update_tradingview_signal_ai_data(signal_id: int, ai_prediction: Optional[Dict], ai_confidence: Optional[float]):
+    """Update AI prediction and confidence for a TradingView signal."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE tradingview_signals
+        SET ai_prediction = ?, ai_confidence = ?
+        WHERE id = ?
+    """, (
+        json.dumps(ai_prediction) if ai_prediction else None,
+        ai_confidence,
+        signal_id
+    ))
+    conn.commit()
+    conn.close()
 
 
 # Initialize database on import

@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
-COPY requirements.txt .
+COPY requirements.txt.full requirements.txt
 
 # Create virtual environment and install dependencies
 RUN python -m venv /opt/venv
@@ -46,7 +46,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application code
 COPY backend/ ./backend/
-COPY .env.example .env
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/backups /app/logs && \
@@ -73,5 +72,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health/live || exit 1
 
-# Run application with hot-reloading for development
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Run application in production mode (no reload, with workers)
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
