@@ -537,6 +537,16 @@ def get_order_by_id(order_id: int) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def get_order_by_client_order_id(client_order_id: str) -> Optional[Dict]:
+    """Retrieve order by client order ID."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM orders WHERE client_order_id = ?", (client_order_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_all_orders(limit: int = 100) -> List[Dict]:
     """Get recent orders."""
     conn = get_db()

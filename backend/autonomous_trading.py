@@ -15,12 +15,16 @@ import asyncio
 import sqlite3
 import json
 import secrets
+import httpx
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Database path
 DATA_DIR = Path(os.getenv("PINELAB_DATA", "./data"))
@@ -865,6 +869,267 @@ class RiskManager:
         }
 
 
+class AIModelPoller:
+    """
+    Polls AI/ML models for predictions and converts them to trading signals.
+
+    Supports multiple model types:
+    - LSTM price predictor
+    - Transformer sequence forecaster
+    - Ensemble predictions
+    """
+
+    # Default symbols to monitor
+    DEFAULT_SYMBOLS = ["BTC_USDT", "ETH_USDT"]
+
+    # API base URL (internal)
+    API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+    def __init__(self, user_id: int = 1):
+        self.user_id = user_id
+        self._http_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=30.0)
+        return self._http_client
+
+    async def close(self):
+        """Close HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+
+    async def get_available_models(self) -> Dict[str, List[str]]:
+        """
+        Get list of available trained models.
+
+        Returns:
+            Dict with model types and their available tickers
+        """
+        try:
+            client = await self._get_client()
+            response = await client.get(f"{self.API_BASE}/api/v2/deep-learning/models/list")
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"Failed to get model list: {response.status_code}")
+                return {"lstm": [], "transformer": [], "ensemble": []}
+
+        except Exception as e:
+            logger.error(f"Error fetching model list: {e}")
+            return {"lstm": [], "transformer": [], "ensemble": []}
+
+    async def get_prediction(
+        self,
+        ticker: str,
+        model_type: str = "lstm",
+        timeframe: str = "1h"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from a specific model.
+
+        Args:
+            ticker: Trading pair (e.g., "BTC_USDT")
+            model_type: Model type ("lstm", "transformer", "ensemble")
+            timeframe: Data timeframe
+
+        Returns:
+            Prediction result or None if failed
+        """
+        try:
+            client = await self._get_client()
+
+            payload = {
+                "ticker": ticker,
+                "model_type": model_type,
+                "timeframe": timeframe,
+                "sequence_length": 60
+            }
+
+            endpoint = f"{self.API_BASE}/api/v2/deep-learning/{model_type}/predict"
+            response = await client.post(endpoint, json=payload)
+
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 404:
+                logger.debug(f"No {model_type} model for {ticker}")
+                return None
+            else:
+                logger.warning(f"Prediction failed for {ticker}: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting prediction for {ticker}: {e}")
+            return None
+
+    def prediction_to_signal(
+        self,
+        prediction: Dict[str, Any],
+        current_price: float,
+        settings: TradingSettings
+    ) -> Optional[PendingSignal]:
+        """
+        Convert a model prediction to a trading signal.
+
+        Args:
+            prediction: Prediction result from model
+            current_price: Current market price
+            settings: User trading settings
+
+        Returns:
+            PendingSignal if actionable, None otherwise
+        """
+        try:
+            ticker = prediction.get("ticker", "")
+            model_type = prediction.get("model_type", "unknown")
+            pred_values = prediction.get("prediction", [])
+            confidence = prediction.get("confidence")
+
+            if not pred_values or len(pred_values) == 0:
+                return None
+
+            # Get predicted price (first value in prediction array)
+            predicted_price = pred_values[0]
+
+            # Calculate price change percentage
+            price_change_pct = ((predicted_price - current_price) / current_price) * 100
+
+            # Determine action based on price change threshold
+            # Threshold: 0.5% minimum move to generate signal
+            THRESHOLD_PCT = 0.5
+
+            if price_change_pct > THRESHOLD_PCT:
+                action = "BUY"
+            elif price_change_pct < -THRESHOLD_PCT:
+                action = "SELL"
+            else:
+                # Price change too small, no signal
+                return None
+
+            # Calculate confidence if not provided
+            if confidence is None:
+                # Use magnitude of price change as proxy for confidence
+                confidence = min(abs(price_change_pct) / 5.0, 1.0)  # Cap at 100%
+
+            # Check minimum confidence threshold
+            if confidence < settings.min_confidence_manual:
+                return None
+
+            # Check symbol restrictions
+            if settings.allowed_symbols and ticker not in settings.allowed_symbols:
+                return None
+            if settings.blocked_symbols and ticker in settings.blocked_symbols:
+                return None
+
+            # Calculate position size
+            sizing = RiskManager.calculate_position_size(settings, confidence)
+
+            # Create signal
+            signal = PendingSignal(
+                signal_source=f"ai_{model_type.lower()}",
+                symbol=ticker,
+                action=action,
+                confidence=confidence,
+                consensus=confidence,  # Single source, so consensus = confidence
+                recommended_size_usd=sizing["size_usd"],
+                recommended_size_pct=sizing["size_pct"],
+                current_price=current_price,
+                predicted_price=predicted_price,
+                price_at_signal=current_price,
+                stop_loss=current_price * (0.98 if action == "BUY" else 1.02),
+                take_profit=predicted_price,
+                status=SignalStatus.PENDING,
+                user_id=self.user_id,
+                metadata={
+                    "model_type": model_type,
+                    "prediction_horizon": prediction.get("prediction_horizon", 1),
+                    "price_change_pct": round(price_change_pct, 2),
+                    "uncertainty": prediction.get("uncertainty"),
+                    "timestamp": prediction.get("timestamp")
+                }
+            )
+
+            return signal
+
+        except Exception as e:
+            logger.error(f"Error converting prediction to signal: {e}")
+            return None
+
+    async def poll_all_models(
+        self,
+        symbols: Optional[List[str]] = None,
+        current_prices: Optional[Dict[str, float]] = None
+    ) -> List[PendingSignal]:
+        """
+        Poll all available models for predictions.
+
+        Args:
+            symbols: List of symbols to poll (default: DEFAULT_SYMBOLS)
+            current_prices: Dict of symbol -> current_price
+
+        Returns:
+            List of generated trading signals
+        """
+        signals = []
+        settings = TradingSettingsManager.get_settings(self.user_id)
+
+        if symbols is None:
+            symbols = self.DEFAULT_SYMBOLS
+
+        # Get available models
+        models = await self.get_available_models()
+
+        for symbol in symbols:
+            # Get current price if not provided
+            if current_prices and symbol in current_prices:
+                current_price = current_prices[symbol]
+            else:
+                # Try to fetch current price
+                current_price = await self._fetch_current_price(symbol)
+                if current_price is None:
+                    continue
+
+            # Try each model type
+            for model_type in ["lstm", "transformer"]:
+                # Check if model is available for this symbol
+                available = models.get(model_type, [])
+                ticker_available = any(
+                    m.get("ticker", "") == symbol or m == symbol
+                    for m in available
+                ) if isinstance(available, list) else False
+
+                if not ticker_available and len(available) == 0:
+                    # Try anyway - model might exist on disk
+                    pass
+
+                prediction = await self.get_prediction(symbol, model_type)
+
+                if prediction:
+                    signal = self.prediction_to_signal(prediction, current_price, settings)
+                    if signal:
+                        signals.append(signal)
+                        logger.info(f"Generated {signal.action} signal for {symbol} from {model_type}")
+
+        return signals
+
+    async def _fetch_current_price(self, symbol: str) -> Optional[float]:
+        """Fetch current price for a symbol."""
+        try:
+            client = await self._get_client()
+            response = await client.get(f"{self.API_BASE}/price/{symbol}")
+
+            if response.status_code == 200:
+                data = response.json()
+                return float(data.get("price", 0))
+            return None
+
+        except Exception as e:
+            logger.error(f"Error fetching price for {symbol}: {e}")
+            return None
+
+
 class AutonomousTradingEngine:
     """
     Main autonomous trading engine that processes signals and executes trades.
@@ -874,6 +1139,7 @@ class AutonomousTradingEngine:
         self.user_id = user_id
         self._running = False
         self._loop_task = None
+        self._ai_poller = AIModelPoller(user_id)
 
     async def process_aggregated_signal(self, aggregation_result: Dict) -> Dict[str, Any]:
         """
@@ -1151,8 +1417,55 @@ class AutonomousTradingEngine:
                 if expired > 0:
                     TradingActivityLogger.log(self.user_id, "signals_expired", {"count": expired})
 
-                # TODO: Poll AI models for new predictions
-                # This would integrate with the AI prediction endpoints
+                # Poll AI models for new predictions
+                try:
+                    ai_signals = await self._ai_poller.poll_all_models()
+
+                    for signal in ai_signals:
+                        # Check if similar signal already exists (avoid duplicates)
+                        existing = PendingSignalQueue.get_pending_signals(
+                            self.user_id,
+                            symbol=signal.symbol,
+                            limit=1
+                        )
+
+                        if existing:
+                            # Skip if we have a pending signal for this symbol
+                            continue
+
+                        # Add signal to queue
+                        signal_id = PendingSignalQueue.add_signal(signal)
+
+                        TradingActivityLogger.log(self.user_id, "ai_signal_generated", {
+                            "signal_id": signal_id,
+                            "symbol": signal.symbol,
+                            "action": signal.action,
+                            "confidence": signal.confidence,
+                            "source": signal.signal_source
+                        })
+
+                        # Auto-approve if confidence meets threshold and mode allows
+                        if (settings.trading_mode in [TradingMode.SEMI_AUTO, TradingMode.FULL_AUTO]
+                                and signal.confidence >= settings.min_confidence_auto):
+                            PendingSignalQueue.update_status(
+                                signal_id,
+                                SignalStatus.AUTO_APPROVED,
+                                reason="High confidence auto-approval"
+                            )
+                            TradingActivityLogger.log(self.user_id, "signal_auto_approved", {
+                                "signal_id": signal_id,
+                                "confidence": signal.confidence
+                            })
+
+                            # Execute if full auto mode
+                            if settings.trading_mode == TradingMode.FULL_AUTO:
+                                await self.execute_signal(signal_id)
+
+                except Exception as poll_error:
+                    logger.error(f"AI polling error: {poll_error}")
+                    TradingActivityLogger.log(self.user_id, "ai_polling_error", {
+                        "error": str(poll_error)
+                    })
 
                 await asyncio.sleep(interval_seconds)
 
@@ -1164,9 +1477,16 @@ class AutonomousTradingEngine:
 
         TradingActivityLogger.log(self.user_id, "autonomous_loop_stopped", {})
 
+        # Cleanup AI poller
+        await self._ai_poller.close()
+
     def stop_loop(self):
         """Stop the autonomous trading loop."""
         self._running = False
+
+    async def cleanup(self):
+        """Cleanup resources."""
+        await self._ai_poller.close()
 
 
 # Initialize schema when module is imported
