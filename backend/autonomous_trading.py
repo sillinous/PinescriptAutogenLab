@@ -774,7 +774,8 @@ class RiskManager:
     """Risk management checks before execution"""
 
     @staticmethod
-    def check_can_trade(user_id: int, symbol: str, size_usd: float, settings: TradingSettings = None) -> Dict[str, Any]:
+    def check_can_trade(user_id: int, symbol: str, size_usd: float, settings: TradingSettings = None,
+                        account_balance: float = None) -> Dict[str, Any]:
         """
         Comprehensive risk check before allowing a trade.
         Returns dict with 'allowed' bool and 'reasons' list.
@@ -823,8 +824,25 @@ class RiskManager:
         if CooldownManager.is_on_cooldown(user_id, symbol, settings.cooldown_minutes):
             reasons.append(f"Symbol {symbol} is on cooldown")
 
-        # TODO: Add position count check (requires broker integration)
-        # TODO: Add portfolio percentage check (requires account balance)
+        # Position count check
+        try:
+            from backend.database import get_all_positions
+            positions = get_all_positions()
+            max_positions = getattr(settings, 'max_positions', 10)
+            if len(positions) >= max_positions:
+                reasons.append(f"Max positions reached ({len(positions)}/{max_positions})")
+        except Exception as e:
+            logger.warning(f"Could not check position count: {e}")
+
+        # Portfolio percentage check
+        try:
+            max_portfolio_pct = getattr(settings, 'max_portfolio_pct', 0.25)  # Default 25%
+            if size_usd and account_balance:
+                position_pct = size_usd / account_balance
+                if position_pct > max_portfolio_pct:
+                    reasons.append(f"Position size {position_pct:.1%} exceeds max {max_portfolio_pct:.1%}")
+        except Exception:
+            pass  # Skip if balance info not available
 
         return {
             "allowed": len(reasons) == 0,

@@ -342,6 +342,112 @@ def save_ml_model(
     return model_id
 
 
+def get_latest_model_by_type(model_type: str) -> Optional[Dict[str, Any]]:
+    """
+    Get the most recently trained model of a specific type.
+
+    Args:
+        model_type: Type of model ('RL', 'LSTM', 'Transformer', 'ensemble')
+
+    Returns:
+        Model info dict or None if no model found
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, name, model_type, version, file_path, hyperparameters,
+               performance_metrics, trained_at, status
+        FROM ml_models
+        WHERE model_type = ? AND status IN ('trained', 'deployed')
+        ORDER BY trained_at DESC
+        LIMIT 1
+    """, (model_type,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        'id': row[0],
+        'name': row[1],
+        'model_type': row[2],
+        'version': row[3],
+        'file_path': row[4],
+        'hyperparameters': json.loads(row[5]) if row[5] else {},
+        'performance_metrics': json.loads(row[6]) if row[6] else {},
+        'trained_at': row[7],
+        'status': row[8]
+    }
+
+
+def get_signal_performance_history(
+    ticker: str,
+    action: str,
+    strategy_name: Optional[str] = None,
+    limit: int = 50
+) -> Dict[str, Any]:
+    """
+    Get historical performance of similar signals.
+
+    Args:
+        ticker: Trading symbol
+        action: Signal action ('buy', 'sell')
+        strategy_name: Optional strategy name to filter by
+        limit: Maximum number of historical signals to analyze
+
+    Returns:
+        Dict with performance statistics
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    if strategy_name:
+        cursor.execute("""
+            SELECT sp.entry_price, sp.exit_price, sp.pnl, sp.duration_minutes, sp.success
+            FROM signal_performance sp
+            JOIN tradingview_signals ts ON sp.signal_id = ts.id
+            WHERE ts.ticker = ? AND ts.action = ? AND ts.strategy_name = ?
+            ORDER BY ts.timestamp DESC
+            LIMIT ?
+        """, (ticker, action, strategy_name, limit))
+    else:
+        cursor.execute("""
+            SELECT sp.entry_price, sp.exit_price, sp.pnl, sp.duration_minutes, sp.success
+            FROM signal_performance sp
+            JOIN tradingview_signals ts ON sp.signal_id = ts.id
+            WHERE ts.ticker = ? AND ts.action = ?
+            ORDER BY ts.timestamp DESC
+            LIMIT ?
+        """, (ticker, action, limit))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return {
+            'count': 0,
+            'avg_pnl': None,
+            'win_rate': None,
+            'avg_duration_minutes': None,
+            'total_pnl': None
+        }
+
+    pnls = [r[2] for r in rows if r[2] is not None]
+    durations = [r[3] for r in rows if r[3] is not None]
+    successes = [r[4] for r in rows if r[4] is not None]
+
+    return {
+        'count': len(rows),
+        'avg_pnl': sum(pnls) / len(pnls) if pnls else None,
+        'win_rate': sum(1 for s in successes if s) / len(successes) if successes else None,
+        'avg_duration_minutes': sum(durations) / len(durations) if durations else None,
+        'total_pnl': sum(pnls) if pnls else None
+    }
+
+
 def log_ai_prediction(
     model_id: int,
     ticker: str,

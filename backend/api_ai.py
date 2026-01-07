@@ -527,9 +527,13 @@ async def get_ai_prediction(
             }
         )
 
-        # Log prediction
+        # Log prediction with actual model_id from database
+        from backend.ai_database import get_latest_model_by_type
+        model_info = get_latest_model_by_type('RL')
+        model_id = model_info['id'] if model_info else None
+
         log_ai_prediction(
-            model_id=1,  # TODO: Get actual model_id from database
+            model_id=model_id,
             ticker=ticker,
             prediction_type='action',
             predicted_value=prediction,
