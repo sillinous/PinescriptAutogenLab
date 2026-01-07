@@ -7,9 +7,10 @@ import os
 import re
 import sqlite3
 from typing import Dict, List, Optional
+from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -17,6 +18,20 @@ from backend.database import init_db, DB_PATH
 from backend.config import Config
 from backend.monitoring.logger import api_logger
 from backend.auth.dependencies import rate_limit_normal, rate_limit_generous
+
+# WebSocket imports
+try:
+    from backend.websocket import (
+        get_connection_manager,
+        websocket_endpoint_handler,
+        get_price_streamer,
+        start_price_streamer,
+        stop_price_streamer
+    )
+    WEBSOCKET_AVAILABLE = True
+except ImportError as e:
+    print(f"[WARNING] WebSocket services not available: {e}")
+    WEBSOCKET_AVAILABLE = False
 
 CRYPTO_BASE = "https://api.crypto.com/v2"
 
@@ -311,3 +326,148 @@ async def autotune_status(symbol: str = "BTC_USDT"):
 
 # Note: AI endpoints are now loaded from api_ai.py router with /api/v1/ai prefix
 # No stub endpoints needed - real AI features available via router
+
+# ============================================================================
+# WebSocket Endpoints
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background services on app startup."""
+    if WEBSOCKET_AVAILABLE:
+        try:
+            await start_price_streamer()
+            print("[INFO] Price streaming service started")
+        except Exception as e:
+            print(f"[WARNING] Failed to start price streamer: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background services on app shutdown."""
+    if WEBSOCKET_AVAILABLE:
+        try:
+            await stop_price_streamer()
+            print("[INFO] Price streaming service stopped")
+        except Exception as e:
+            print(f"[WARNING] Failed to stop price streamer: {e}")
+
+
+if WEBSOCKET_AVAILABLE:
+    @app.websocket("/ws/prices")
+    async def websocket_prices(websocket: WebSocket):
+        """
+        WebSocket endpoint for real-time price streaming.
+
+        Usage:
+            - Connect to ws://host:port/ws/prices
+            - Send: {"action": "subscribe", "symbol": "BTC_USDT"}
+            - Send: {"action": "unsubscribe", "symbol": "BTC_USDT"}
+            - Send: {"action": "subscribe_all"} for all symbols
+
+        Messages received:
+            - {"type": "price", "symbol": "BTC_USDT", "price": 50000.0, ...}
+            - {"type": "prices", "data": [...], "count": 5}
+        """
+        streamer = get_price_streamer()
+        await websocket.accept()
+
+        try:
+            # Send initial prices
+            await streamer._send_all_prices(websocket)
+
+            while True:
+                data = await websocket.receive_json()
+                action = data.get("action", "").lower()
+                symbol = data.get("symbol")
+
+                if action == "subscribe" and symbol:
+                    await streamer.subscribe(websocket, symbol)
+                    await websocket.send_json({
+                        "type": "subscribed",
+                        "symbol": symbol
+                    })
+
+                elif action == "unsubscribe" and symbol:
+                    await streamer.unsubscribe(websocket, symbol)
+                    await websocket.send_json({
+                        "type": "unsubscribed",
+                        "symbol": symbol
+                    })
+
+                elif action == "subscribe_all":
+                    await streamer.subscribe(websocket, None)
+                    await websocket.send_json({
+                        "type": "subscribed",
+                        "symbol": "all"
+                    })
+
+                elif action == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Unknown action: {action}"
+                    })
+
+        except WebSocketDisconnect:
+            await streamer.disconnect(websocket)
+        except Exception as e:
+            api_logger.warning(f"WebSocket error: {e}")
+            await streamer.disconnect(websocket)
+
+
+    @app.websocket("/ws/events")
+    async def websocket_events(websocket: WebSocket, user_id: Optional[int] = None):
+        """
+        WebSocket endpoint for real-time trading events.
+
+        Events include:
+            - Order updates (created, filled, cancelled)
+            - Position changes
+            - P&L updates
+            - System alerts
+            - AI signal notifications
+        """
+        manager = get_connection_manager()
+        await manager.connect(websocket, user_id)
+
+        try:
+            while True:
+                data = await websocket.receive_json()
+
+                # Echo for testing or handle specific commands
+                if data.get("type") == "ping":
+                    await manager.send_personal_message({"type": "pong"}, websocket)
+                else:
+                    # Echo back for now
+                    await manager.send_personal_message({
+                        "type": "echo",
+                        "data": data
+                    }, websocket)
+
+        except WebSocketDisconnect:
+            manager.disconnect(websocket)
+        except Exception as e:
+            api_logger.warning(f"WebSocket events error: {e}")
+            manager.disconnect(websocket)
+
+
+    @app.get("/ws/status")
+    async def websocket_status():
+        """Get WebSocket service status."""
+        streamer = get_price_streamer()
+        manager = get_connection_manager()
+
+        return {
+            "price_streaming": {
+                "running": streamer._running,
+                "subscribers": streamer.get_subscriber_count(),
+                "symbols": list(streamer.subscriptions.keys()),
+                "prices": streamer.get_all_prices()
+            },
+            "events": {
+                "connections": sum(len(conns) for conns in manager.active_connections.values())
+            }
+        }

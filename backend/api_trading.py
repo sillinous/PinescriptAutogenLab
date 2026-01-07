@@ -581,3 +581,74 @@ async def get_autonomous_status(user_id: int = 1):
         "running": engine._running,
         "user_id": user_id
     }
+
+
+# ============================================================================
+# Exchange Management Endpoints
+# ============================================================================
+
+try:
+    from backend.brokers.exchange_config import (
+        get_all_exchanges,
+        get_configured_exchanges,
+        get_exchange_config,
+        COMMON_PAIRS
+    )
+    EXCHANGE_CONFIG_AVAILABLE = True
+except ImportError:
+    EXCHANGE_CONFIG_AVAILABLE = False
+
+
+@router.get("/exchanges")
+async def list_exchanges():
+    """
+    List all supported exchanges.
+
+    Returns exchange information including:
+    - Supported features (spot, futures, margin)
+    - Fee structure
+    - Testnet availability
+    """
+    if not EXCHANGE_CONFIG_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Exchange config module not available")
+
+    return {
+        "exchanges": get_all_exchanges(),
+        "configured": get_configured_exchanges(),
+        "common_pairs": COMMON_PAIRS
+    }
+
+
+@router.get("/exchanges/{exchange_id}")
+async def get_exchange_info(exchange_id: str):
+    """Get detailed information about a specific exchange."""
+    if not EXCHANGE_CONFIG_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Exchange config module not available")
+
+    config = get_exchange_config(exchange_id)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Exchange '{exchange_id}' not found")
+
+    # Check if configured
+    configured_exchanges = get_configured_exchanges()
+    is_configured = exchange_id.lower() in configured_exchanges
+
+    return {
+        "id": config.exchange_id,
+        "name": config.display_name,
+        "configured": is_configured,
+        "features": {
+            "spot": config.has_spot,
+            "futures": config.has_futures,
+            "margin": config.has_margin,
+        },
+        "fees": {
+            "maker": config.maker_fee,
+            "taker": config.taker_fee,
+        },
+        "testnet_available": config.testnet_available,
+        "requires_password": config.requires_password,
+        "supported_quotes": config.supported_quote_currencies,
+        "min_order_value_usd": config.min_order_value_usd,
+        "notes": config.notes
+    }
