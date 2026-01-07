@@ -208,8 +208,14 @@ class TradingViewWebhookHandler:
             True if signature is valid, False otherwise
         """
         if not self.webhook_secret:
-            # If no secret configured, skip validation
-            return True
+            # Security: Reject webhooks if no secret is configured
+            import warnings
+            warnings.warn(
+                "WEBHOOK_SECRET not configured - rejecting webhook for security. "
+                "Set WEBHOOK_SECRET environment variable to enable webhooks.",
+                UserWarning
+            )
+            return False
 
         expected_signature = hmac.new(
             self.webhook_secret.encode('utf-8'),

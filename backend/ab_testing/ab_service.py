@@ -191,9 +191,18 @@ class ABTestingService:
 
         Performs statistical analysis to determine if there's
         a significant difference between variants.
+
+        Raises:
+            ValueError: If test_name does not exist
         """
         conn = get_db()
         cursor = conn.cursor()
+
+        # Check if test exists
+        cursor.execute("SELECT 1 FROM ab_tests WHERE test_name = ?", (test_name,))
+        if cursor.fetchone() is None:
+            conn.close()
+            raise ValueError(f"A/B test '{test_name}' not found")
 
         # Get variant A trades
         cursor.execute("""

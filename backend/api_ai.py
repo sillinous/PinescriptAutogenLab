@@ -229,6 +229,40 @@ async def process_tradingview_webhook(
             signal.strategy_name
         )
 
+        # ========================================================
+        # AUTONOMOUS TRADING INTEGRATION
+        # Route signal through the autonomous trading engine
+        # ========================================================
+        trading_result = None
+        try:
+            from backend.autonomous_trading import AutonomousTradingEngine
+
+            engine = AutonomousTradingEngine(user_id=1)
+
+            # Build aggregation result for trading engine
+            aggregation_for_trading = {
+                'source': 'tradingview_webhook',
+                'symbol': aggregated.ticker,
+                'action': aggregated.action.upper(),
+                'confidence': aggregated.aggregated_confidence,
+                'consensus': aggregated.consensus_score,
+                'should_execute': should_execute,
+                'signal_data': payload.dict(),
+                'market_context': {
+                    'current_price': enriched.current_price,
+                    'support_levels': enriched.support_levels,
+                    'resistance_levels': enriched.resistance_levels
+                }
+            }
+
+            # Process through autonomous trading engine
+            trading_result = await engine.process_aggregated_signal(aggregation_for_trading)
+
+        except Exception as te:
+            print(f"[WARNING] Autonomous trading integration: {te}")
+            trading_result = {"action": "skipped", "reason": str(te)}
+        # ========================================================
+
         return SignalResponse(
             signal_id=signal_id,
             ticker=aggregated.ticker,
@@ -242,7 +276,8 @@ async def process_tradingview_webhook(
                 'ai_confidence': enriched.ai_confidence,
                 'market_price': enriched.current_price,
                 'support_levels': enriched.support_levels,
-                'resistance_levels': enriched.resistance_levels
+                'resistance_levels': enriched.resistance_levels,
+                'trading_action': trading_result
             }
         )
 
@@ -286,8 +321,8 @@ async def get_chart_data(request: ChartDataRequest):
         # Add indicators
         df_with_indicators = await chart_service.get_indicators(df)
 
-        # Convert to dict for JSON response
-        data = df_with_indicators.to_dict(orient='records')
+        # Convert to dict for JSON response (replace NaN with None for JSON compliance)
+        data = df_with_indicators.replace({np.nan: None}).to_dict(orient='records')
 
         return {
             'ticker': request.ticker,
@@ -355,7 +390,7 @@ async def generate_features(request: FeatureRequest):
             'ticker': request.ticker,
             'num_features': len(feature_columns),
             'features': feature_columns,
-            'sample_data': df_features[feature_columns].tail(5).to_dict(orient='records')
+            'sample_data': df_features[feature_columns].tail(5).replace({np.nan: None}).to_dict(orient='records')
         }
 
     except Exception as e:
@@ -583,6 +618,39 @@ async def aggregate_signals(ticker: str):
         # Aggregate
         aggregated = aggregator.aggregate(sources)
 
+        # Check if should execute
+        should_execute = aggregator.should_execute_signal(
+            aggregated,
+            min_confidence=0.6,
+            min_consensus=0.5
+        )
+
+        # ========================================================
+        # AUTONOMOUS TRADING INTEGRATION
+        # ========================================================
+        trading_action = None
+        try:
+            from backend.autonomous_trading import AutonomousTradingEngine
+
+            engine = AutonomousTradingEngine(user_id=1)
+
+            aggregation_for_trading = {
+                'source': 'signal_aggregator',
+                'symbol': aggregated.ticker,
+                'action': aggregated.action.upper(),
+                'confidence': aggregated.aggregated_confidence,
+                'consensus': aggregated.consensus_score,
+                'should_execute': should_execute,
+                'signal_data': {'sources': aggregated.participating_sources},
+                'market_context': {}
+            }
+
+            trading_action = await engine.process_aggregated_signal(aggregation_for_trading)
+
+        except Exception as te:
+            trading_action = {"action": "skipped", "reason": str(te)}
+        # ========================================================
+
         return {
             'ticker': aggregated.ticker,
             'action': aggregated.action,
@@ -590,6 +658,8 @@ async def aggregate_signals(ticker: str):
             'consensus': aggregated.consensus_score,
             'sources': aggregated.participating_sources,
             'recommended_position_size': aggregated.recommended_position_size,
+            'should_execute': should_execute,
+            'trading_action': trading_action,
             'timestamp': aggregated.timestamp.isoformat()
         }
 

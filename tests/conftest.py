@@ -40,12 +40,12 @@ def test_db_path() -> Generator[str, None, None]:
 
 
 @pytest.fixture(scope="function")
-def db(test_db_path: str) -> Generator:
+def db(test_db_path: str, monkeypatch) -> Generator:
     """Create a fresh database for each test."""
-    from backend.database import init_db, get_db_path
-
-    # Override database path
-    os.environ['DATABASE_PATH'] = test_db_path
+    from backend.database import init_db
+    
+    # Override database path using monkeypatch
+    monkeypatch.setattr('backend.database.DB_PATH', test_db_path)
 
     # Initialize database
     init_db()
@@ -249,7 +249,7 @@ def mock_alpaca_client(monkeypatch):
     def mock_get_client(*args, **kwargs):
         return mock
 
-    from backend import alpaca_integration
+    from backend.brokers import alpaca_client as alpaca_integration
     monkeypatch.setattr(alpaca_integration, 'get_alpaca_client', mock_get_client)
 
     return mock

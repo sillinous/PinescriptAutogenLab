@@ -11,8 +11,17 @@ import secrets
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# JWT settings
-SECRET_KEY = Config.WEBHOOK_SECRET or secrets.token_urlsafe(32)
+# JWT settings - require dedicated secret for production security
+if not Config.JWT_SECRET:
+    import warnings
+    warnings.warn(
+        "JWT_SECRET not set - generating random key. Sessions will be invalidated on restart. "
+        "Set JWT_SECRET environment variable for production.",
+        UserWarning
+    )
+    SECRET_KEY = secrets.token_urlsafe(32)
+else:
+    SECRET_KEY = Config.JWT_SECRET
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 REFRESH_TOKEN_EXPIRE_DAYS = 30

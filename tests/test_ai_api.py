@@ -373,8 +373,8 @@ class TestEdgeCases:
     def test_special_characters_in_ticker(self, client):
         """Test endpoints with special characters in ticker."""
         response = client.get('/api/v1/ai/signal/aggregate/BTC%2FUSDT')
-        # Should handle or reject gracefully
-        assert response.status_code in [200, 400, 500, 503]
+        # Should handle or reject gracefully (404 is valid for URL-encoded slashes)
+        assert response.status_code in [200, 400, 404, 500, 503]
 
     def test_very_large_bars_request(self, client, mock_chart_service):
         """Test requesting very large number of bars."""

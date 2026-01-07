@@ -44,7 +44,14 @@ class EncryptionService:
             self.cipher = Fernet(key.encode())
         else:
             # Derive from password using PBKDF2
-            salt = b'pinelab_salt_v1'  # In production, store salt separately
+            # Salt from environment variable for production security
+            salt_hex = os.getenv("ENCRYPTION_SALT", "")
+            if not salt_hex:
+                raise ValueError(
+                    "ENCRYPTION_SALT not set. Generate with: "
+                    "python -c \"import secrets; print(secrets.token_hex(16))\""
+                )
+            salt = bytes.fromhex(salt_hex)
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,

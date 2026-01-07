@@ -1,4 +1,7 @@
 
+# backend/app.py
+
+
 import asyncio
 import os
 import re
@@ -6,49 +9,58 @@ import sqlite3
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.database import init_db, DB_PATH # Import init_db and DB_PATH from the centralized database module
+from backend.database import init_db, DB_PATH
+from backend.config import Config
+from backend.monitoring.logger import api_logger
+from backend.auth.dependencies import rate_limit_normal, rate_limit_generous
 
 CRYPTO_BASE = "https://api.crypto.com/v2"
 
 app = FastAPI(title="PineLab AI Trading Platform", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=Config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # ============================================================================
-# AI/ML Router Integration (Phase 1)
+# Router Integration with robust error handling for missing dependencies
 # ============================================================================
+try:
+    from backend.api_auth import router as auth_router
+    app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+    print("[INFO] Authentication endpoints loaded successfully")
+except (ModuleNotFoundError, ImportError) as e:
+    print(f"[WARNING] Authentication endpoints not loaded: {e}")
+
 try:
     from backend.api_ai import router as ai_router
     app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI Trading"])
     print("[INFO] AI Trading endpoints loaded successfully")
-except Exception as e:
+except (ModuleNotFoundError, ImportError) as e:
     print(f"[WARNING] AI endpoints not loaded: {e}")
-    print("[INFO] To enable AI features, ensure all dependencies are installed:")
-    print("       pip install -r requirements.txt")
 
-# ============================================================================
-# Phase 2: Deep Learning Router Integration
-# ============================================================================
 try:
     from backend.api_deep_learning import router as deep_learning_router
-    app.include_router(deep_learning_router)
+    app.include_router(deep_learning_router, prefix="/api/v1/ai", tags=["Deep Learning"])
     print("[INFO] Phase 2 Deep Learning endpoints loaded successfully")
-    print("[INFO]    - LSTM Price Prediction")
-    print("[INFO]    - Transformer Sequence Forecasting")
-    print("[INFO]    - Ensemble Model Aggregation")
-except Exception as e:
+except (ModuleNotFoundError, ImportError) as e:
     print(f"[WARNING] Phase 2 Deep Learning endpoints not loaded: {e}")
-    print("[INFO] To enable Deep Learning features, ensure PyTorch is installed:")
-    print("       pip install torch>=2.1.0")
+
+try:
+    from backend.api_trading import router as trading_router
+    app.include_router(trading_router, prefix="/api/v1", tags=["Autonomous Trading"])
+    print("[INFO] Autonomous Trading endpoints loaded successfully")
+except (ModuleNotFoundError, ImportError) as e:
+    print(f"[WARNING] Autonomous Trading endpoints not loaded: {e}")
 # ============================================================================
+
 
 # Initialize the database using the centralized function
 init_db()
@@ -109,7 +121,7 @@ async def health_ready():
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Not ready: {str(e)}")
 
-@app.get("/symbols")
+@app.get("/symbols", dependencies=[Depends(rate_limit_generous)])
 async def symbols():
     async with httpx.AsyncClient() as client:
         res = await crypto_get(client, "/public/get-ticker")
@@ -118,7 +130,7 @@ async def symbols():
         compact = [n.replace("_", "") for n in names]
         return {"symbols": names, "aliases": compact}
 
-@app.get("/price/{symbol}")
+@app.get("/price/{symbol}", dependencies=[Depends(rate_limit_normal)])
 async def price(symbol: str):
     sym = normalize_symbol(symbol)
     async with httpx.AsyncClient() as client:
@@ -150,14 +162,14 @@ INTERVAL_MAP = {
     "1D": "1D",
 }
 
-@app.get("/candles/{symbol}")
+@app.get("/candles/{symbol}", dependencies=[Depends(rate_limit_normal)])
 async def candles(symbol: str, interval: str = "1m", limit: int = 200):
-    print(f"[DEBUG] Candles endpoint called: symbol={symbol}, interval={interval}, limit={limit}")
+    api_logger.debug(f"Candles endpoint called: symbol={symbol}, interval={interval}, limit={limit}")
     sym = normalize_symbol(symbol)
-    print(f"[DEBUG] Normalized symbol: {sym}, timeframe: {interval}")
+    api_logger.debug(f"Normalized symbol: {sym}, timeframe: {interval}")
     tf = INTERVAL_MAP.get(interval, "1m")
     limit = max(1, min(1000, int(limit)))
-    print(f"[DEBUG] Final params: sym={sym}, tf={tf}, limit={limit}")
+    api_logger.debug(f"Final params: sym={sym}, tf={tf}, limit={limit}")
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -214,29 +226,71 @@ def _pct_change(vals):
     if start == 0: return 0.0
     return (end - start) / start * 100.0
 
-@app.get("/ab/status")
-async def ab_status():
-    btc = await candles("BTC_USDT", "1m", 120)
-    eth = await candles("ETH_USDT", "1m", 120)
-    btc_ret = _pct_change([c["c"] for c in btc["candles"]])
-    eth_ret = _pct_change([c["c"] for c in eth["candles"]])
-    winner = "A" if btc_ret >= eth_ret else "B"
+@app.get("/ab/status", dependencies=[Depends(rate_limit_generous)])
+async def ab_status(symbol_a: str = "BTC_USDT", symbol_b: str = "ETH_USDT"):
+    """
+    Compare momentum performance between two symbols.
+    Users can select which symbols to compare via query parameters.
+    """
+    try:
+        data_a = await candles(symbol_a, "1m", 120)
+        data_b = await candles(symbol_b, "1m", 120)
+    except Exception as e:
+        api_logger.warning(f"Failed to fetch candles for A/B test: {e}")
+        return {
+            "test_name": f"{symbol_a} vs {symbol_b} (2h momentum)",
+            "symbol_a": symbol_a,
+            "symbol_b": symbol_b,
+            "variant_a_winrate": 50.0,
+            "variant_b_winrate": 50.0,
+            "winner": "TIE",
+            "error": "Unable to fetch market data"
+        }
+
+    ret_a = _pct_change([c["c"] for c in data_a["candles"]])
+    ret_b = _pct_change([c["c"] for c in data_b["candles"]])
+
+    if abs(ret_a - ret_b) < 0.01:
+        winner = "TIE"
+    else:
+        winner = "A" if ret_a >= ret_b else "B"
+
     return {
-        "test_name": "BTC vs ETH (1h momentum)",
-        "variant_a_winrate": round(max(0.0, min(100.0, 50 + btc_ret / 2)), 2),
-        "variant_b_winrate": round(max(0.0, min(100.0, 50 + eth_ret / 2)), 2),
+        "test_name": f"{symbol_a} vs {symbol_b} (2h momentum)",
+        "symbol_a": symbol_a,
+        "symbol_b": symbol_b,
+        "variant_a_winrate": round(max(0.0, min(100.0, 50 + ret_a / 2)), 2),
+        "variant_b_winrate": round(max(0.0, min(100.0, 50 + ret_b / 2)), 2),
         "winner": winner,
+        "returns": {
+            "symbol_a": round(ret_a, 4),
+            "symbol_b": round(ret_b, 4)
+        }
     }
 
-@app.get("/autotune/status")
-async def autotune_status():
-    data = await candles("BTC_USDT", "1m", 300)
+@app.get("/autotune/status", dependencies=[Depends(rate_limit_generous)])
+async def autotune_status(symbol: str = "BTC_USDT"):
+    """
+    Auto-optimize SMA window for a given symbol.
+    Users can select which symbol to analyze via query parameter.
+    """
+    try:
+        data = await candles(symbol, "1m", 300)
+    except Exception as e:
+        api_logger.warning(f"Failed to fetch candles for autotune: {e}")
+        return {
+            "symbol": symbol,
+            "progress": 0,
+            "best_parameters": {"sma_window": None, "score": 0},
+            "error": "Unable to fetch market data"
+        }
+
     closes = [c["c"] for c in data["candles"]]
     best_w = None
     best_score = -1e9
     tested = 0
     for w in range(5, 41):
-        if len(closes) < w + 2: 
+        if len(closes) < w + 2:
             continue
         rets = [(closes[i] - closes[i-1]) / (closes[i-1] or 1e-9) for i in range(1, len(closes))]
         window = rets[-w:]
@@ -249,7 +303,11 @@ async def autotune_status():
             best_score = score
             best_w = w
     progress = round(min(100.0, tested / 36 * 100.0), 1)
-    return {"progress": progress, "best_parameters": {"sma_window": best_w, "score": round(best_score, 4)}}
+    return {
+        "symbol": symbol,
+        "progress": progress,
+        "best_parameters": {"sma_window": best_w, "score": round(best_score, 4)}
+    }
 
 # Note: AI endpoints are now loaded from api_ai.py router with /api/v1/ai prefix
 # No stub endpoints needed - real AI features available via router

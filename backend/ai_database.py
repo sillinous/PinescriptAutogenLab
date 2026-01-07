@@ -323,7 +323,7 @@ def save_ml_model(
 
     cursor.execute("""
         INSERT INTO ml_models
-        (name, model_type, version, file_path, hyperparameters, performance_metrics, trained_at, status)
+        (name, type, version, file_path, hyperparameters, performance_metrics, trained_at, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'trained')
     """, (
         name,

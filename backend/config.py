@@ -21,9 +21,11 @@ class Config:
     # Data directory
     DATA_DIR = os.getenv("PINELAB_DATA", "./data")
 
-    # Webhook security
+    # Security secrets
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
     REQUIRE_WEBHOOK_SIGNATURE = bool(WEBHOOK_SECRET)
+    JWT_SECRET = os.getenv("JWT_SECRET", "")
+    ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "")
 
     # Alpaca configuration
     ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")

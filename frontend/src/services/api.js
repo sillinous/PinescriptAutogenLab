@@ -58,12 +58,19 @@ export const tradingAPI = {
     return fetchJSON(`${API_BASE}/candles/${symbol}?interval=${interval}&limit=${limit}`)
   },
 
-  async getABStatus() {
-    return fetchJSON(`${API_BASE}/ab/status`)
+  async getABStatus(symbolA = null, symbolB = null) {
+    let url = `${API_BASE}/ab/status`
+    const params = []
+    if (symbolA) params.push(`symbol_a=${encodeURIComponent(symbolA)}`)
+    if (symbolB) params.push(`symbol_b=${encodeURIComponent(symbolB)}`)
+    if (params.length > 0) url += `?${params.join('&')}`
+    return fetchJSON(url)
   },
 
-  async getAutotuneStatus() {
-    return fetchJSON(`${API_BASE}/autotune/status`)
+  async getAutotuneStatus(symbol = null) {
+    let url = `${API_BASE}/autotune/status`
+    if (symbol) url += `?symbol=${encodeURIComponent(symbol)}`
+    return fetchJSON(url)
   },
 
   async healthCheck() {
@@ -129,6 +136,130 @@ export const aiAPI = {
       method: 'POST',
       body: JSON.stringify(payload),
     })
+  },
+}
+
+// ============================================================================
+// Autonomous Trading APIs
+// ============================================================================
+
+export const autonomousTradingAPI = {
+  // Trading Settings
+  async getSettings() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/settings`)
+  },
+
+  async updateSettings(settings) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  },
+
+  // Kill Switch
+  async activateKillSwitch(reason = 'Manual activation') {
+    return fetchJSON(`${API_BASE}/api/v1/trading/kill-switch/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    })
+  },
+
+  async deactivateKillSwitch() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/kill-switch/deactivate`, {
+      method: 'POST',
+    })
+  },
+
+  async getKillSwitchStatus() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/kill-switch/status`)
+  },
+
+  // Pending Signals
+  async getPendingSignals() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/pending`)
+  },
+
+  async getSignalHistory(limit = 100) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/history?limit=${limit}`)
+  },
+
+  async getSignal(signalId) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/${signalId}`)
+  },
+
+  async approveSignal(signalId) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/${signalId}/approve`, {
+      method: 'POST',
+    })
+  },
+
+  async rejectSignal(signalId, reason = 'Manual rejection') {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/${signalId}/reject?reason=${encodeURIComponent(reason)}`, {
+      method: 'POST',
+    })
+  },
+
+  // Manual Signal
+  async submitManualSignal(symbol, action, confidence = 0.8, sizeUsd = null, reason = 'Manual signal') {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/manual`, {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol,
+        action,
+        confidence,
+        size_usd: sizeUsd,
+        reason,
+      }),
+    })
+  },
+
+  // Execution
+  async executeSignal(signalId) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/execute/${signalId}`, {
+      method: 'POST',
+    })
+  },
+
+  // Status & Stats
+  async getTradingStatus() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/status`)
+  },
+
+  async getDailyStats() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/stats/daily`)
+  },
+
+  async getActivityLog(limit = 50) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/activity?limit=${limit}`)
+  },
+
+  // Risk Check
+  async checkRisk(symbol, sizeUsd = 100) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/risk-check/${symbol}?size_usd=${sizeUsd}`)
+  },
+
+  // Position Sizing
+  async calculatePositionSize(confidence = 0.7, accountBalance = null) {
+    let url = `${API_BASE}/api/v1/trading/position-size?confidence=${confidence}`
+    if (accountBalance) url += `&account_balance=${accountBalance}`
+    return fetchJSON(url)
+  },
+
+  // Autonomous Loop Control
+  async startAutonomousLoop(intervalSeconds = 30) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/autonomous/start?interval_seconds=${intervalSeconds}`, {
+      method: 'POST',
+    })
+  },
+
+  async stopAutonomousLoop() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/autonomous/stop`, {
+      method: 'POST',
+    })
+  },
+
+  async getAutonomousStatus() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/autonomous/status`)
   },
 }
 

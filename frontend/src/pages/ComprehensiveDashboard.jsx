@@ -8,6 +8,7 @@ import { FeatureExplorer } from '../components/ai/FeatureExplorer'
 import { ABTestingPanel, AutoOptimizationPanel } from '../components/platform/PlatformMetrics'
 import { Card, MetricCard } from '../components/common/Card'
 import DeepLearningDashboard from '../components/ai/DeepLearningDashboard'
+import TradingDashboard from '../components/trading/TradingDashboard'
 import UserHandbook from '../components/UserHandbook'
 
 export default function ComprehensiveDashboard() {
@@ -32,6 +33,7 @@ export default function ComprehensiveDashboard() {
 
   const tabs = [
     { id: 'overview', label: '📊 Overview', icon: '📊' },
+    { id: 'trading', label: '🤖 Trading', icon: '🤖' },
     { id: 'models', label: '🎓 Model Lab', icon: '🎓' },
     { id: 'deeplearning', label: '🧠 Deep Learning', icon: '🧠' },
     { id: 'features', label: '🔬 Features', icon: '🔬' },
@@ -156,6 +158,11 @@ export default function ComprehensiveDashboard() {
           </div>
         )}
 
+        {/* Autonomous Trading Tab */}
+        {activeTab === 'trading' && (
+          <TradingDashboard />
+        )}
+
         {/* Model Lab Tab */}
         {activeTab === 'models' && (
           <div className="space-y-6">
@@ -236,8 +243,8 @@ export default function ComprehensiveDashboard() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-6">
-              <ABTestingPanel />
-              <AutoOptimizationPanel />
+              <ABTestingPanel availableSymbols={symbols} />
+              <AutoOptimizationPanel availableSymbols={symbols} />
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">

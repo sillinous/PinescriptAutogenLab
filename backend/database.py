@@ -57,6 +57,23 @@ def init_db():
         )
     """)
 
+    # Candle cache table for market data
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            t INTEGER NOT NULL,
+            o REAL NOT NULL,
+            h REAL NOT NULL,
+            l REAL NOT NULL,
+            c REAL NOT NULL,
+            v REAL NOT NULL,
+            UNIQUE(symbol, timeframe, t)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_candles_symbol_tf ON candles(symbol, timeframe)")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,6 +215,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS email_verification_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            token_hash TEXT UNIQUE NOT NULL,
             token TEXT UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP NOT NULL,
@@ -231,6 +249,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            token_hash TEXT UNIQUE NOT NULL,
             token TEXT UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP NOT NULL,
@@ -245,8 +264,10 @@ def init_db():
             payload TEXT NOT NULL,
             retries_attempted INTEGER DEFAULT 0,
             max_retries INTEGER DEFAULT 5,
-            next_attempt_at TIMESTAMP NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            next_attempt_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT,
+            last_error TEXT
         )
     """)
 
@@ -284,7 +305,8 @@ def init_db():
             performance_metrics TEXT, -- Stored as JSON string
             trained_at TIMESTAMP,
             deployed_at TIMESTAMP,
-            status VARCHAR(20)  -- 'training', 'deployed', 'archived'
+            status VARCHAR(20),  -- 'training', 'deployed', 'archived'
+            UNIQUE(name, version)
         )
     """)
 
