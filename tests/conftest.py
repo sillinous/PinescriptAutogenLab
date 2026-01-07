@@ -9,52 +9,109 @@ import os
 import sys
 import tempfile
 import shutil
+import sqlite3
+import uuid
 from datetime import datetime, timedelta
 from typing import Generator, Dict, Any
 import asyncio
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.pool import StaticPool
 
 # Add backend to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Set test environment
+# Set test environment BEFORE importing backend modules
 os.environ['TESTING'] = 'true'
 os.environ['WEBHOOK_SECRET'] = 'test_webhook_secret_key_12345'
 os.environ['JWT_SECRET'] = 'test_jwt_secret_key_67890'
 os.environ['ENCRYPTION_KEY'] = 'test_encryption_key_abcdefghijklmnopqrstuvwxyz123456'
 os.environ['SMTP_ENABLED'] = 'false'
 
+# Check for optional dependencies
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
-@pytest.fixture(scope="session")
-def test_db_path() -> Generator[str, None, None]:
-    """Create a temporary test database."""
+try:
+    import pyotp
+    PYOTP_AVAILABLE = True
+except ImportError:
+    PYOTP_AVAILABLE = False
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "requires_torch: skip if PyTorch not installed")
+    config.addinivalue_line("markers", "requires_pyotp: skip if pyotp not installed")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests based on available dependencies."""
+    skip_torch = pytest.mark.skip(reason="PyTorch not installed")
+    skip_pyotp = pytest.mark.skip(reason="pyotp not installed")
+
+    for item in items:
+        # Auto-skip deep learning tests if torch not available
+        if "deep_learning" in item.nodeid or "TestLSTM" in item.nodeid or "TestTransformer" in item.nodeid or "TestEnsemble" in item.nodeid:
+            if not TORCH_AVAILABLE:
+                item.add_marker(skip_torch)
+
+        # Skip 2FA tests if pyotp not available
+        if "two_factor" in item.nodeid or "2fa" in item.nodeid.lower():
+            if not PYOTP_AVAILABLE:
+                item.add_marker(skip_pyotp)
+
+        # Check for explicit markers
+        if item.get_closest_marker("requires_torch") and not TORCH_AVAILABLE:
+            item.add_marker(skip_torch)
+        if item.get_closest_marker("requires_pyotp") and not PYOTP_AVAILABLE:
+            item.add_marker(skip_pyotp)
+
+
+@pytest.fixture(scope="function")
+def isolated_db_path() -> Generator[str, None, None]:
+    """Create an isolated temporary database for each test."""
     temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, 'test_pinelab.db')
+    db_path = os.path.join(temp_dir, f'test_{uuid.uuid4().hex[:8]}.db')
 
     yield db_path
 
     # Cleanup
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    try:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    except Exception:
+        pass
 
 
 @pytest.fixture(scope="function")
-def db(test_db_path: str, monkeypatch) -> Generator:
-    """Create a fresh database for each test."""
-    from backend.database import init_db
-    
-    # Override database path using monkeypatch
-    monkeypatch.setattr('backend.database.DB_PATH', test_db_path)
+def db(isolated_db_path: str, monkeypatch) -> Generator:
+    """Create a fresh isolated database for each test."""
+    from pathlib import Path
 
-    # Initialize database
-    init_db()
+    # Create a new Path object for the test database
+    test_db_path = Path(isolated_db_path)
 
-    yield
+    # Patch the DB_PATH before importing/initializing
+    import backend.database as db_module
+    original_db_path = db_module.DB_PATH
 
-    # Cleanup - remove test database
-    if os.path.exists(test_db_path):
-        os.remove(test_db_path)
+    monkeypatch.setattr(db_module, 'DB_PATH', test_db_path)
+
+    # Override get_db to use check_same_thread=False for test isolation
+    original_get_db = db_module.get_db
+    def test_get_db():
+        conn = sqlite3.connect(str(test_db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+    monkeypatch.setattr(db_module, 'get_db', test_get_db)
+
+    # Initialize the test database
+    db_module.init_db()
+
+    yield test_db_path
+
+    # Cleanup handled by isolated_db_path fixture
 
 
 @pytest.fixture(scope="function")
@@ -95,8 +152,8 @@ def registered_user(client: TestClient, test_user_data: Dict[str, str]) -> Dict[
     user = response.json()
 
     # Verify email automatically in tests
-    from backend.database import get_connection
-    conn = get_connection()
+    from backend.database import get_db
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (user['id'],))
     conn.commit()
@@ -113,8 +170,8 @@ def registered_admin(client: TestClient, test_admin_data: Dict[str, str]) -> Dic
     user = response.json()
 
     # Make user admin and verify email
-    from backend.database import get_connection
-    conn = get_connection()
+    from backend.database import get_db
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET is_admin = 1, email_verified = 1 WHERE id = ?", (user['id'],))
     conn.commit()

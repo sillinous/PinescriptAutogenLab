@@ -63,7 +63,7 @@ class TestLSTMEndpoints:
         with patch('backend.api_deep_learning.chart_service', mock_chart_service_dl), \
              patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir):
 
-            response = client.post('/api/v2/deep-learning/lstm/train', json={
+            response = client.post('/api/v1/ai/lstm/train', json={
                 'ticker': 'BTC_USDT',
                 'timeframe': '1h',
                 'lookback_days': 7,
@@ -102,7 +102,7 @@ class TestLSTMEndpoints:
         with patch('backend.api_deep_learning.chart_service', mock_chart_service_dl), \
              patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir):
 
-            response = client.post('/api/v2/deep-learning/lstm/train', json={
+            response = client.post('/api/v1/ai/lstm/train', json={
                 'ticker': 'BTC_USDT',
                 'sequence_length': 60,  # Requires more data than available
                 'prediction_horizon': 5,
@@ -117,7 +117,7 @@ class TestLSTMEndpoints:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.post('/api/v2/deep-learning/lstm/predict', json={
+            response = client.post('/api/v1/ai/lstm/predict', json={
                 'ticker': 'NONEXISTENT',
                 'model_type': 'lstm',
                 'timeframe': '1h',
@@ -129,7 +129,7 @@ class TestLSTMEndpoints:
 
     def test_train_lstm_missing_ticker(self, client):
         """Test LSTM training without ticker."""
-        response = client.post('/api/v2/deep-learning/lstm/train', json={
+        response = client.post('/api/v1/ai/lstm/train', json={
             'timeframe': '1h',
             'epochs': 1
         })
@@ -145,7 +145,7 @@ class TestTransformerEndpoints:
         with patch('backend.api_deep_learning.chart_service', mock_chart_service_dl), \
              patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir):
 
-            response = client.post('/api/v2/deep-learning/transformer/train', json={
+            response = client.post('/api/v1/ai/transformer/train', json={
                 'ticker': 'ETH_USDT',
                 'timeframe': '1h',
                 'lookback_days': 7,
@@ -172,7 +172,7 @@ class TestTransformerEndpoints:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.post('/api/v2/deep-learning/transformer/predict', json={
+            response = client.post('/api/v1/ai/transformer/predict', json={
                 'ticker': 'NONEXISTENT',
                 'model_type': 'transformer',
                 'timeframe': '1h',
@@ -191,7 +191,7 @@ class TestEnsembleEndpoints:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.post('/api/v2/deep-learning/ensemble/create', json={
+            response = client.post('/api/v1/ai/ensemble/create', json={
                 'ticker': 'BTC_USDT',
                 'model_types': ['lstm', 'transformer'],
                 'ensemble_method': 'weighted_average'
@@ -203,7 +203,7 @@ class TestEnsembleEndpoints:
     def test_predict_ensemble_not_created(self, client):
         """Test ensemble prediction when ensemble doesn't exist."""
         with patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
-            response = client.post('/api/v2/deep-learning/ensemble/predict', json={
+            response = client.post('/api/v1/ai/ensemble/predict', json={
                 'ticker': 'NONEXISTENT',
                 'model_type': 'ensemble',
                 'timeframe': '1h',
@@ -218,7 +218,7 @@ class TestEnsembleEndpoints:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.post('/api/v2/deep-learning/ensemble/create', json={
+            response = client.post('/api/v1/ai/ensemble/create', json={
                 'ticker': 'BTC_USDT',
                 'model_types': ['lstm'],
                 'ensemble_method': 'invalid_method'
@@ -236,7 +236,7 @@ class TestModelManagement:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.get('/api/v2/deep-learning/models/list')
+            response = client.get('/api/v1/ai/models/list')
 
             assert response.status_code == 200
             data = response.json()
@@ -253,7 +253,7 @@ class TestModelManagement:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.get('/api/v2/deep-learning/models/list')
+            response = client.get('/api/v1/ai/models/list')
 
             assert response.status_code == 200
             data = response.json()
@@ -268,7 +268,7 @@ class TestModelManagement:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.delete('/api/v2/deep-learning/models/lstm/TEST')
+            response = client.delete('/api/v1/ai/models/lstm/TEST')
 
             assert response.status_code == 200
             data = response.json()
@@ -279,7 +279,7 @@ class TestModelManagement:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.delete('/api/v2/deep-learning/models/lstm/NONEXISTENT')
+            response = client.delete('/api/v1/ai/models/lstm/NONEXISTENT')
 
             # Should succeed even if file doesn't exist
             assert response.status_code == 200
@@ -289,7 +289,7 @@ class TestModelManagement:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir), \
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
-            response = client.get('/api/v2/deep-learning/models/performance/BTC_USDT')
+            response = client.get('/api/v1/ai/models/performance/BTC_USDT')
 
             assert response.status_code == 200
             data = response.json()
@@ -302,7 +302,7 @@ class TestRequestValidation:
 
     def test_lstm_train_invalid_epochs(self, client):
         """Test LSTM training with invalid epochs value."""
-        response = client.post('/api/v2/deep-learning/lstm/train', json={
+        response = client.post('/api/v1/ai/lstm/train', json={
             'ticker': 'BTC_USDT',
             'epochs': -1  # Invalid negative
         })
@@ -312,7 +312,7 @@ class TestRequestValidation:
 
     def test_transformer_train_invalid_nhead(self, client):
         """Test Transformer training with invalid nhead value."""
-        response = client.post('/api/v2/deep-learning/transformer/train', json={
+        response = client.post('/api/v1/ai/transformer/train', json={
             'ticker': 'BTC_USDT',
             'd_model': 64,
             'nhead': 7,  # Must divide d_model evenly
@@ -324,7 +324,7 @@ class TestRequestValidation:
 
     def test_predict_missing_ticker(self, client):
         """Test prediction without ticker."""
-        response = client.post('/api/v2/deep-learning/lstm/predict', json={
+        response = client.post('/api/v1/ai/lstm/predict', json={
             'model_type': 'lstm',
             'timeframe': '1h'
         })
@@ -333,7 +333,7 @@ class TestRequestValidation:
 
     def test_ensemble_empty_model_types(self, client):
         """Test ensemble creation with empty model types."""
-        response = client.post('/api/v2/deep-learning/ensemble/create', json={
+        response = client.post('/api/v1/ai/ensemble/create', json={
             'ticker': 'BTC_USDT',
             'model_types': []  # Empty list
         })
@@ -353,7 +353,7 @@ class TestConcurrency:
              patch('backend.api_deep_learning.models_cache', {'lstm': {}, 'transformer': {}, 'ensemble': {}}):
 
             def make_request(ticker):
-                return client.post('/api/v2/deep-learning/lstm/predict', json={
+                return client.post('/api/v1/ai/lstm/predict', json={
                     'ticker': ticker,
                     'model_type': 'lstm',
                     'timeframe': '1h',
@@ -377,7 +377,7 @@ class TestEdgeCases:
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir):
             long_ticker = 'A' * 200
 
-            response = client.post('/api/v2/deep-learning/lstm/predict', json={
+            response = client.post('/api/v1/ai/lstm/predict', json={
                 'ticker': long_ticker,
                 'model_type': 'lstm',
                 'timeframe': '1h',
@@ -390,7 +390,7 @@ class TestEdgeCases:
     def test_special_characters_ticker(self, client, temp_model_dir):
         """Test with special characters in ticker."""
         with patch('backend.api_deep_learning.MODEL_DIR', temp_model_dir):
-            response = client.post('/api/v2/deep-learning/lstm/predict', json={
+            response = client.post('/api/v1/ai/lstm/predict', json={
                 'ticker': 'BTC/USDT',  # Contains slash
                 'model_type': 'lstm',
                 'timeframe': '1h',
@@ -402,7 +402,7 @@ class TestEdgeCases:
 
     def test_zero_sequence_length(self, client):
         """Test with zero sequence length."""
-        response = client.post('/api/v2/deep-learning/lstm/predict', json={
+        response = client.post('/api/v1/ai/lstm/predict', json={
             'ticker': 'BTC_USDT',
             'model_type': 'lstm',
             'timeframe': '1h',
@@ -413,7 +413,7 @@ class TestEdgeCases:
 
     def test_negative_prediction_horizon(self, client):
         """Test with negative prediction horizon."""
-        response = client.post('/api/v2/deep-learning/lstm/train', json={
+        response = client.post('/api/v1/ai/lstm/train', json={
             'ticker': 'BTC_USDT',
             'prediction_horizon': -1,
             'epochs': 1
