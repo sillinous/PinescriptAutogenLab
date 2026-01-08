@@ -9,6 +9,9 @@ import { ABTestingPanel, AutoOptimizationPanel } from '../components/platform/Pl
 import { Card, MetricCard } from '../components/common/Card'
 import DeepLearningDashboard from '../components/ai/DeepLearningDashboard'
 import TradingDashboard from '../components/trading/TradingDashboard'
+import SignalQueueDashboard from '../components/trading/SignalQueueDashboard'
+import MarketRegimeDashboard from '../components/trading/MarketRegimeDashboard'
+import AnalyticsDashboard from '../components/analytics/AnalyticsDashboard'
 import UserHandbook from '../components/UserHandbook'
 
 export default function ComprehensiveDashboard() {
@@ -34,11 +37,14 @@ export default function ComprehensiveDashboard() {
   const tabs = [
     { id: 'overview', label: '📊 Overview', icon: '📊' },
     { id: 'trading', label: '🤖 Trading', icon: '🤖' },
+    { id: 'signals', label: '📋 Signals', icon: '📋' },
+    { id: 'regime', label: '🌡️ Market Regime', icon: '🌡️' },
+    { id: 'analytics', label: '📈 Analytics', icon: '📈' },
     { id: 'models', label: '🎓 Model Lab', icon: '🎓' },
     { id: 'deeplearning', label: '🧠 Deep Learning', icon: '🧠' },
     { id: 'features', label: '🔬 Features', icon: '🔬' },
     { id: 'platform', label: '⚙️ Platform', icon: '⚙️' },
-    { id: 'handbook', label: '📚 Help & Guide', icon: '📚' },
+    { id: 'handbook', label: '📚 Help', icon: '📚' },
   ]
 
   return (
@@ -161,6 +167,27 @@ export default function ComprehensiveDashboard() {
         {/* Autonomous Trading Tab */}
         {activeTab === 'trading' && (
           <TradingDashboard />
+        )}
+
+        {/* Signal Queue Tab */}
+        {activeTab === 'signals' && (
+          <div className="bg-gray-900 rounded-xl p-6">
+            <SignalQueueDashboard />
+          </div>
+        )}
+
+        {/* Market Regime Tab */}
+        {activeTab === 'regime' && (
+          <div className="bg-gray-900 rounded-xl p-6">
+            <MarketRegimeDashboard />
+          </div>
+        )}
+
+        {/* Analytics Tab */}
+        {activeTab === 'analytics' && (
+          <div className="bg-gray-900 rounded-xl p-6">
+            <AnalyticsDashboard />
+          </div>
         )}
 
         {/* Model Lab Tab */}
