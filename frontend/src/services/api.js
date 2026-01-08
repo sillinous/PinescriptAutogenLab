@@ -264,6 +264,69 @@ export const autonomousTradingAPI = {
 }
 
 // ============================================================================
+// Analytics APIs
+// ============================================================================
+
+export const analyticsAPI = {
+  // Trade History
+  async getTradeHistory(params = {}) {
+    const { limit = 100, offset = 0, symbol, status, side, startDate, endDate } = params
+    const queryParams = new URLSearchParams({ limit, offset })
+    if (symbol) queryParams.append('symbol', symbol)
+    if (status) queryParams.append('status', status)
+    if (side) queryParams.append('side', side)
+    if (startDate) queryParams.append('start_date', startDate)
+    if (endDate) queryParams.append('end_date', endDate)
+    return fetchJSON(`${API_BASE}/api/v1/analytics/trades/history?${queryParams}`)
+  },
+
+  async getTradeMetrics(period = 'all', symbol = null) {
+    let url = `${API_BASE}/api/v1/analytics/trades/metrics?period=${period}`
+    if (symbol) url += `&symbol=${encodeURIComponent(symbol)}`
+    return fetchJSON(url)
+  },
+
+  async getDailyPerformance(days = 30) {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/trades/daily-performance?days=${days}`)
+  },
+
+  async getTradesBySymbol(period = 'month') {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/trades/by-symbol?period=${period}`)
+  },
+
+  // Portfolio
+  async getPortfolioPositions() {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/portfolio/positions`)
+  },
+
+  async getPortfolioSummary() {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/portfolio/summary`)
+  },
+
+  async getEquityCurve(days = 30) {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/portfolio/equity-curve?days=${days}`)
+  },
+
+  // Risk
+  async getRiskMetrics() {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/risk/metrics`)
+  },
+
+  async getRiskExposure() {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/risk/exposure`)
+  },
+
+  // Strategies
+  async listStrategies() {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/strategies/list`)
+  },
+
+  async getStrategyPerformance(strategyName) {
+    return fetchJSON(`${API_BASE}/api/v1/analytics/strategies/${encodeURIComponent(strategyName)}/performance`)
+  },
+}
+
+// ============================================================================
 // Polling Utilities
 // ============================================================================
 

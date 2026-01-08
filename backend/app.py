@@ -74,6 +74,13 @@ try:
     print("[INFO] Autonomous Trading endpoints loaded successfully")
 except (ModuleNotFoundError, ImportError) as e:
     print(f"[WARNING] Autonomous Trading endpoints not loaded: {e}")
+
+try:
+    from backend.api_analytics import router as analytics_router
+    app.include_router(analytics_router, prefix="/api/v1/analytics", tags=["Analytics"])
+    print("[INFO] Analytics endpoints loaded successfully")
+except (ModuleNotFoundError, ImportError) as e:
+    print(f"[WARNING] Analytics endpoints not loaded: {e}")
 # ============================================================================
 
 
