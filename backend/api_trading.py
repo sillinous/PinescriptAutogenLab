@@ -652,3 +652,303 @@ async def get_exchange_info(exchange_id: str):
         "min_order_value_usd": config.min_order_value_usd,
         "notes": config.notes
     }
+
+
+# ============================================================================
+# Signal Simulation Endpoints
+# ============================================================================
+
+@router.post("/signals/{signal_id}/simulate")
+async def simulate_signal(signal_id: int, user_id: int = 1):
+    """
+    Simulate a signal execution without actually trading.
+
+    Returns hypothetical P&L and risk analysis.
+    """
+    signal = PendingSignalQueue.get_signal(signal_id)
+    if not signal:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    settings = TradingSettingsManager.get_settings(user_id)
+
+    # Calculate hypothetical outcomes
+    entry_price = signal.entry_price or signal.current_price
+    stop_loss_pct = getattr(settings, 'stop_loss_pct', 2.0)
+    take_profit_pct = getattr(settings, 'take_profit_pct', 5.0)
+
+    size_usd = signal.size_usd or 100
+
+    # Simulate outcomes
+    if signal.action == 'buy':
+        stop_loss_price = entry_price * (1 - stop_loss_pct / 100)
+        take_profit_price = entry_price * (1 + take_profit_pct / 100)
+        max_loss = size_usd * (stop_loss_pct / 100)
+        max_profit = size_usd * (take_profit_pct / 100)
+    else:  # sell/short
+        stop_loss_price = entry_price * (1 + stop_loss_pct / 100)
+        take_profit_price = entry_price * (1 - take_profit_pct / 100)
+        max_loss = size_usd * (stop_loss_pct / 100)
+        max_profit = size_usd * (take_profit_pct / 100)
+
+    # Risk/reward ratio
+    risk_reward = take_profit_pct / stop_loss_pct if stop_loss_pct else None
+
+    # Expected value based on confidence
+    win_probability = signal.confidence
+    expected_value = (win_probability * max_profit) - ((1 - win_probability) * max_loss)
+
+    return {
+        "signal_id": signal_id,
+        "symbol": signal.symbol,
+        "action": signal.action,
+        "simulation": {
+            "entry_price": round(entry_price, 4),
+            "stop_loss_price": round(stop_loss_price, 4),
+            "take_profit_price": round(take_profit_price, 4),
+            "position_size_usd": round(size_usd, 2),
+            "max_loss_usd": round(max_loss, 2),
+            "max_profit_usd": round(max_profit, 2),
+            "risk_reward_ratio": round(risk_reward, 2) if risk_reward else None,
+            "win_probability": round(signal.confidence, 3),
+            "expected_value_usd": round(expected_value, 2),
+            "recommendation": "favorable" if expected_value > 0 else "unfavorable"
+        }
+    }
+
+
+# ============================================================================
+# Market Regime Detection Endpoints
+# ============================================================================
+
+@router.get("/market-regime/{ticker}")
+async def get_market_regime(ticker: str, timeframe: str = "1h"):
+    """
+    Detect current market regime for a ticker.
+
+    Returns regime type (bullish, bearish, ranging, volatile) with confidence.
+    """
+    try:
+        from backend.integrations.tradingview.chart_service import chart_service
+
+        # Fetch OHLCV data
+        df = await chart_service.get_ohlcv(ticker, timeframe=timeframe, bars=200)
+
+        if df is None or len(df) < 50:
+            raise HTTPException(status_code=400, detail="Insufficient data for regime detection")
+
+        import numpy as np
+
+        # Calculate indicators for regime detection
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+
+        # Trend detection using SMA crossover
+        sma_20 = np.convolve(close, np.ones(20)/20, mode='valid')[-1]
+        sma_50 = np.convolve(close, np.ones(50)/50, mode='valid')[-1]
+        current_price = close[-1]
+
+        # Volatility using ATR approximation
+        tr = np.maximum(high[1:] - low[1:],
+                       np.abs(high[1:] - close[:-1]),
+                       np.abs(low[1:] - close[:-1]))
+        atr = np.mean(tr[-14:])
+        atr_pct = (atr / current_price) * 100
+
+        # Price momentum
+        returns_20d = (current_price - close[-20]) / close[-20] * 100
+
+        # Determine regime
+        if atr_pct > 3:  # High volatility
+            regime = "high_volatility"
+            confidence = min(0.9, atr_pct / 5)
+        elif current_price > sma_20 > sma_50:
+            regime = "bullish_trending"
+            confidence = min(0.85, 0.5 + returns_20d / 20)
+        elif current_price < sma_20 < sma_50:
+            regime = "bearish_trending"
+            confidence = min(0.85, 0.5 + abs(returns_20d) / 20)
+        else:
+            regime = "range_bound"
+            confidence = 0.6
+
+        # Strategy recommendation based on regime
+        strategy_recommendations = {
+            "bullish_trending": ["momentum", "trend_following", "breakout"],
+            "bearish_trending": ["short_momentum", "mean_reversion", "hedging"],
+            "range_bound": ["mean_reversion", "grid_trading", "options_selling"],
+            "high_volatility": ["volatility_breakout", "options_buying", "reduced_position_size"]
+        }
+
+        return {
+            "ticker": ticker,
+            "timeframe": timeframe,
+            "regime": regime,
+            "confidence": round(confidence, 3),
+            "metrics": {
+                "current_price": round(current_price, 4),
+                "sma_20": round(sma_20, 4),
+                "sma_50": round(sma_50, 4),
+                "atr_pct": round(atr_pct, 2),
+                "returns_20d_pct": round(returns_20d, 2)
+            },
+            "recommended_strategies": strategy_recommendations.get(regime, []),
+            "risk_adjustment": 0.5 if regime == "high_volatility" else 1.0
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Chart service not available")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Regime detection failed: {str(e)}")
+
+
+@router.get("/market-regime/{ticker}/history")
+async def get_market_regime_history(ticker: str, days: int = 30):
+    """Get historical market regime changes."""
+    try:
+        from backend.ai_database import get_db
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT regime_type, confidence, start_time, end_time, detected_by
+            FROM market_regimes
+            WHERE ticker = ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        """, (ticker, days))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return {
+            "ticker": ticker,
+            "history": [dict(row) for row in rows]
+        }
+
+    except Exception as e:
+        return {"ticker": ticker, "history": [], "error": str(e)}
+
+
+# ============================================================================
+# Feature Store Endpoints
+# ============================================================================
+
+@router.get("/features/{ticker}")
+async def get_stored_features(ticker: str, limit: int = 100):
+    """Get stored features for a ticker from the feature store."""
+    try:
+        from backend.database import get_db
+        import json
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT timestamp, features
+            FROM feature_store
+            WHERE ticker = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (ticker, limit))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        features = []
+        for row in rows:
+            try:
+                feature_data = json.loads(row['features']) if row['features'] else {}
+                features.append({
+                    "timestamp": row['timestamp'],
+                    "features": feature_data
+                })
+            except:
+                pass
+
+        return {
+            "ticker": ticker,
+            "count": len(features),
+            "features": features
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get features: {str(e)}")
+
+
+@router.get("/features/{ticker}/latest")
+async def get_latest_features(ticker: str):
+    """Get the most recent feature set for a ticker."""
+    try:
+        from backend.database import get_db
+        import json
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT timestamp, features
+            FROM feature_store
+            WHERE ticker = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (ticker,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No features found for {ticker}")
+
+        feature_data = json.loads(row['features']) if row['features'] else {}
+
+        return {
+            "ticker": ticker,
+            "timestamp": row['timestamp'],
+            "features": feature_data,
+            "feature_count": len(feature_data)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get features: {str(e)}")
+
+
+@router.get("/features/statistics")
+async def get_feature_statistics():
+    """Get statistics about the feature store."""
+    try:
+        from backend.database import get_db
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Get unique tickers
+        cursor.execute("SELECT DISTINCT ticker FROM feature_store")
+        tickers = [row[0] for row in cursor.fetchall()]
+
+        # Get counts per ticker
+        cursor.execute("""
+            SELECT ticker, COUNT(*) as count, MAX(timestamp) as latest
+            FROM feature_store
+            GROUP BY ticker
+        """)
+        stats = [dict(row) for row in cursor.fetchall()]
+
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM feature_store")
+        total = cursor.fetchone()[0]
+
+        conn.close()
+
+        return {
+            "total_entries": total,
+            "unique_tickers": len(tickers),
+            "tickers": tickers,
+            "by_ticker": stats
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")

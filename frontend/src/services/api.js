@@ -261,6 +261,35 @@ export const autonomousTradingAPI = {
   async getAutonomousStatus() {
     return fetchJSON(`${API_BASE}/api/v1/trading/autonomous/status`)
   },
+
+  // Signal Simulation
+  async simulateSignal(signalId) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/signals/${signalId}/simulate`, {
+      method: 'POST',
+    })
+  },
+
+  // Market Regime
+  async getMarketRegime(ticker, timeframe = '1h') {
+    return fetchJSON(`${API_BASE}/api/v1/trading/market-regime/${encodeURIComponent(ticker)}?timeframe=${timeframe}`)
+  },
+
+  async getMarketRegimeHistory(ticker, days = 30) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/market-regime/${encodeURIComponent(ticker)}/history?days=${days}`)
+  },
+
+  // Feature Store
+  async getStoredFeatures(ticker, limit = 100) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/features/${encodeURIComponent(ticker)}?limit=${limit}`)
+  },
+
+  async getLatestFeatures(ticker) {
+    return fetchJSON(`${API_BASE}/api/v1/trading/features/${encodeURIComponent(ticker)}/latest`)
+  },
+
+  async getFeatureStatistics() {
+    return fetchJSON(`${API_BASE}/api/v1/trading/features/statistics`)
+  },
 }
 
 // ============================================================================
