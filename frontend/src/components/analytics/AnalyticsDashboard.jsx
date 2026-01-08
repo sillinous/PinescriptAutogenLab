@@ -11,8 +11,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { analyticsAPI } from '../../services/api';
-import Card from '../common/Card';
-import Loading from '../common/Loading';
+import { Card } from '../common/Card';
+import { LoadingCard as Loading } from '../common/Loading';
 
 // ============================================================================
 // Sub-Components
